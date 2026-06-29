@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  DiskSync ships NON-SANDBOXED by default so it can read arbitrary
+	  source folders and write to /Volumes/<external drive>. No networking
+	  entitlement is requested — the app makes no network calls of any kind.
+
+	  Sandboxed alternative (not used by default): set ENABLE_APP_SANDBOX = YES
+	  and add com.apple.security.files.user-selected.read-write here, relying on
+	  security-scoped bookmarks for every source and the destination.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+</dict>
+</plist>

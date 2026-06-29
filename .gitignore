@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific & build artifacts
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# App runtime data (local SQLite + logs live in ~/Library, not the repo)
