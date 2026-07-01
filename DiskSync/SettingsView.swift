@@ -95,7 +95,7 @@ private struct GeneralSettings: View {
                         .truncationMode(.middle)
                 }
                 Button("Choose / Verify Destination…") { app.pickDestination() }
-                Text("DiskSync writes a small marker file (\(Defaults.markerFileName)) to confirm the target. It will not write anywhere without it.")
+                Text("ProfessorNotch writes a small marker file (\(Defaults.markerFileName)) to confirm the target. It will not write anywhere without it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

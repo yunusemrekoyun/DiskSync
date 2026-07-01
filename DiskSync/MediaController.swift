@@ -3,12 +3,14 @@
 //  DiskSync
 //
 //  Reads and controls the currently-playing track in Apple Music / Spotify via
-//  AppleScript, and exposes the system output volume. 100% local — no network.
+//  AppleScript, and exposes the system output volume. Fully local except for an
+//  optional Spotify cover-art download (off by default; opt-in in Settings).
 //  Polled only while the notch is open (see NowPlayingView) to save resources.
 //
 
 import Foundation
 import AppKit
+import os
 
 nonisolated enum MediaSource: String, Sendable {
     case none, music, spotify
@@ -216,12 +218,25 @@ final class MediaController {
         }
     }
 
+    /// Single-flight guard: at most one AppleScript executes at a time. Task
+    /// cancellation can't abort a synchronous NSAppleScript call, so if one
+    /// hangs on a wedged Music/Spotify we must skip new runs rather than pile
+    /// up blocked worker threads (thread-pool exhaustion).
+    private nonisolated static let scriptInFlight = OSAllocatedUnfairLock(initialState: false)
+
     private nonisolated static func rawRunScript(_ source: String) async -> String? {
-        await withCheckedContinuation { continuation in
+        let acquired = scriptInFlight.withLock { busy -> Bool in
+            if busy { return false }
+            busy = true
+            return true
+        }
+        guard acquired else { return nil }
+        return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 var error: NSDictionary?
                 let script = NSAppleScript(source: source)
                 let result = script?.executeAndReturnError(&error)
+                scriptInFlight.withLock { $0 = false }
                 continuation.resume(returning: result?.stringValue)
             }
         }

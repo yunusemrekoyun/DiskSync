@@ -1,12 +1,12 @@
 //
 //  HubView.swift
-//  DiskSync
+//  ProfessorNotch
 //
-//  The SwiftUI content hosted inside the notch HUD panel. Three tabs:
-//  Now Playing (media + audio), Sync (DiskSync), and Apps (launcher).
-//
-//  Phase 1: tab shell + the Sync tab wired to existing UI; the other tabs are
-//  placeholders we'll fill in next.
+//  The SwiftUI content hosted inside the notch HUD panel. A tab bar that splits
+//  around the physical notch, plus the six hub modules: Now Playing (media +
+//  audio output), Sync (the offline backup engine), Battery, Apps (launcher),
+//  Shelf + Clipboard, and System monitor. Any module except Sync can be hidden
+//  from Settings; hidden tabs are filtered out of the bar.
 //
 
 import SwiftUI
@@ -184,14 +184,35 @@ struct HubView: View {
                 }
                 DriveCardView(app: app)
                 CloudStatusRow()
-                Button {
-                    app.syncNow()
-                } label: {
-                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                        .frame(maxWidth: .infinity)
+                if !app.destinationConfigured {
+                    // First run: no destination yet — guide the user straight to it.
+                    Button {
+                        app.pickDestination()
+                    } label: {
+                        Label("Set Up Backup…", systemImage: "externaldrive.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glassProminent)
+                } else {
+                    Button {
+                        app.syncNow()
+                    } label: {
+                        Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(!app.canSyncNow)
+                    .help(app.canSyncNow
+                          ? "Sync the selected folders now."
+                          : (app.sources.isEmpty
+                             ? "Add folders in Settings to start backing up."
+                             : "Connect the backup drive to sync."))
+                    if app.sources.isEmpty {
+                        Button("Add folders…") { openSettings() }
+                            .buttonStyle(.glass)
+                            .font(.caption)
+                    }
                 }
-                .buttonStyle(.glassProminent)
-                .disabled(!app.canSyncNow)
             }
             .padding(12)
         }

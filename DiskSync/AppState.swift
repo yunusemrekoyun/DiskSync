@@ -180,7 +180,7 @@ final class AppState {
         }
 
         let driveName = drive.volumeName.isEmpty ? "the drive" : drive.volumeName
-        let title = result.errorsCount > 0 ? "DiskSync finished with errors" : "DiskSync complete"
+        let title = result.errorsCount > 0 ? "Backup finished with errors" : "Backup complete"
         let body = result.errorsCount > 0
             ? "\(result.summary) → \(driveName)"
             : "Synced \(result.filesCopied) file(s) to \(driveName)"
@@ -269,7 +269,7 @@ final class AppState {
     func pickDestination() {
         let panel = NSOpenPanel()
         panel.title = "Choose the backup destination"
-        panel.message = "Select a folder on your external drive. DiskSync will write a small marker file there."
+        panel.message = "Select a folder on your external drive. ProfessorNotch will write a small marker file there."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
@@ -600,7 +600,7 @@ final class AppState {
 
     private func presentError(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "DiskSync"
+        alert.messageText = "ProfessorNotch"
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.runModal()

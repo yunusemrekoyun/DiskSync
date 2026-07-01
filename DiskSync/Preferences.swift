@@ -39,7 +39,9 @@ final class Preferences {
         // didSet does not fire for assignments in init, so no write-back here.
         // Use a local reference (not self.store) since self isn't ready yet.
         let d = UserDefaults.standard
-        func flag(_ key: String) -> Bool { d.object(forKey: key) == nil ? true : d.bool(forKey: key) }
+        func flag(_ key: String, default def: Bool = true) -> Bool {
+            d.object(forKey: key) == nil ? def : d.bool(forKey: key)
+        }
         showNowPlaying = flag("pref.nowPlaying")
         showBattery = flag("pref.battery")
         showLauncher = flag("pref.launcher")
@@ -47,6 +49,8 @@ final class Preferences {
         showSystem = flag("pref.system")
         hapticsEnabled = flag("pref.haptics")
         clipboardEnabled = flag("pref.clipboard")
-        artworkNetworkEnabled = flag("pref.artworkNetwork")
+        // Off by default so a stock install is fully offline until the user
+        // explicitly opts in (honors the "100% local & offline" promise).
+        artworkNetworkEnabled = flag("pref.artworkNetwork", default: false)
     }
 }

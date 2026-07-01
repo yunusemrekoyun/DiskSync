@@ -267,7 +267,12 @@ actor SyncManager {
                 if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
                                   excludes: request.excludes, sourceId: source.id) { continue }
                 let sourceItem = source.url.appendingPathComponent(relWithin)
-                if !fm.fileExists(atPath: sourceItem.path) { orphans.append(item) }
+                // fileExists follows symlinks, so a broken symlink in the source
+                // would look "gone" and get archived. Treat an existing link
+                // (even a dangling one) as present — only real orphans qualify.
+                let sourceMissing = !fm.fileExists(atPath: sourceItem.path)
+                    && (try? fm.destinationOfSymbolicLink(atPath: sourceItem.path)) == nil
+                if sourceMissing { orphans.append(item) }
             }
             // Archive after enumeration so we don't mutate the tree mid-walk.
             for orphan in orphans { archiveFile(orphan, sourceId: source.id) }
@@ -275,6 +280,12 @@ actor SyncManager {
 
         // Copy a single entry (file / symlink / directory marker).
         func copyOne(_ url: URL, _ rv: URLResourceValues?, _ source: ResolvedSource) {
+            // Re-check the marker before EVERY entry (not just every 50), so a
+            // drive that vanishes mid-run can never lead to a createDirectory/
+            // copy that recreates the backup tree on the internal disk at the
+            // now-empty mount point.
+            if aborted { return }
+            if destinationGone() { aborted = true; return }
             let isDir = rv?.isDirectory ?? false
             let isLink = rv?.isSymbolicLink ?? false
             let relWithin = relativePath(of: url, base: source.url)
@@ -311,7 +322,6 @@ actor SyncManager {
             processed += 1
             if processed % 50 == 0 {
                 progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: 0, currentPath: relHome))
-                if destinationGone() { aborted = true }
             }
         }
 
@@ -326,6 +336,10 @@ actor SyncManager {
                                                  }) else { return }
             while let item = enumerator.nextObject() as? URL {
                 if aborted { break }
+                // Never copy our own in-flight temp artifacts (a crash could
+                // leave one inside a synced source folder).
+                let leaf = item.lastPathComponent
+                if leaf.hasPrefix(".disksync-tmp-") || leaf.hasPrefix(".disksync-restore-") { continue }
                 let rv = try? item.resourceValues(forKeys: keys)
                 let relWithin = relativePath(of: item, base: source.url)
                 if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
