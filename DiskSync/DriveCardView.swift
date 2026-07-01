@@ -45,11 +45,19 @@ struct DriveCardView: View {
 
             if syncing, let progress = app.progress {
                 VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: progress.fraction)
-                        .progressViewStyle(.linear)
-                    Text("\(progress.filesProcessed.formatted()) / \(progress.filesTotalEstimate.formatted()) files")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    if progress.filesTotalEstimate > 0 {
+                        ProgressView(value: progress.fraction)
+                            .progressViewStyle(.linear)
+                        Text("\(progress.filesProcessed.formatted()) / \(progress.filesTotalEstimate.formatted()) files")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                        Text("Copying \(progress.filesProcessed.formatted()) file(s)…")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } else if connected {
                 FreeSpaceBar(drive: app.drive)

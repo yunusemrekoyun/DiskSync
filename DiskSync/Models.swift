@@ -70,6 +70,18 @@ nonisolated struct SyncRun: Identifiable, Sendable, Hashable {
     var summary: String
 }
 
+/// A file that mirror-mode moved into the on-drive archive (recoverable).
+nonisolated struct ArchivedItem: Identifiable, Sendable, Hashable {
+    var id: Int64
+    var relativePath: String        // original home-relative path (where to restore)
+    var archivePath: String         // path inside the archive folder
+    var deletedAt: Date
+    var bytes: Int64
+    var sourceId: Int64?
+
+    var name: String { (relativePath as NSString).lastPathComponent }
+}
+
 /// One per-file event inside a run.
 nonisolated struct SyncEvent: Identifiable, Sendable, Hashable {
     var id: Int64
@@ -91,6 +103,9 @@ nonisolated struct AppSettings: Sendable, Equatable {
     var autoSyncEnabled: Bool
     var runAtLogin: Bool
     var notificationsEnabled: Bool
+    /// Mirror mode: reflect deletions/moves on the drive by relocating removed
+    /// items into the on-drive archive (never a hard delete). Off by default.
+    var mirrorEnabled: Bool
 
     static let `default` = AppSettings(
         destinationBookmark: nil,
@@ -98,7 +113,8 @@ nonisolated struct AppSettings: Sendable, Equatable {
         syncIntervalMinutes: 15,
         autoSyncEnabled: true,
         runAtLogin: false,
-        notificationsEnabled: true
+        notificationsEnabled: true,
+        mirrorEnabled: false
     )
 }
 
@@ -145,7 +161,11 @@ nonisolated struct SuggestedItem: Identifiable, Sendable, Hashable {
 
 nonisolated enum Defaults {
     /// The marker file written at the destination root to confirm the target.
+    /// Also holds the JSON config manifest (so the drive "remembers" its setup).
     static let markerFileName = ".disksync-target"
+
+    /// On-drive archive folder where mirror mode relocates removed items.
+    static let archiveFolderName = ".DiskSync-Archive"
 
     /// Suggested folders/files offered as one-tap quick-adds.
     static let suggested: [SuggestedItem] = [

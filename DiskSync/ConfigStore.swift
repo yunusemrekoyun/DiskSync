@@ -52,9 +52,17 @@ actor ConfigStore {
 
     // MARK: - History
 
-    func recordRun(_ result: SyncRunResult) async throws { try await database.recordRun(result) }
+    func recordRun(_ result: SyncRunResult) async throws {
+        try await database.recordRun(result)
+        if !result.archived.isEmpty { try await database.insertArchived(result.archived) }
+    }
     func recentRuns() async throws -> [SyncRun] { try await database.fetchRecentRuns() }
     func recentEvents() async throws -> [SyncEvent] { try await database.fetchRecentEvents() }
+
+    // MARK: - Archive (mirror mode)
+
+    func archivedItems() async throws -> [ArchivedItem] { try await database.fetchArchived() }
+    func removeArchived(_ id: Int64) async throws { try await database.deleteArchived(id: id) }
 
     // MARK: - Bookmarks (nonisolated: pure URL <-> Data helpers)
 

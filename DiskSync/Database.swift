@@ -140,6 +140,7 @@ actor Database {
             autoSyncEnabled INTEGER NOT NULL,
             runAtLogin INTEGER NOT NULL,
             notificationsEnabled INTEGER NOT NULL,
+            mirrorEnabled INTEGER NOT NULL DEFAULT 0,
             schemaVersion INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS sources (
@@ -177,6 +178,15 @@ actor Database {
             message TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_events_ts ON sync_events(timestamp DESC);
+        CREATE TABLE IF NOT EXISTS archived_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            relativePath TEXT NOT NULL,
+            archivePath TEXT NOT NULL,
+            deletedAt REAL NOT NULL,
+            bytes INTEGER NOT NULL,
+            sourceId INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_archived_ts ON archived_items(deletedAt DESC);
         """
         var err: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
@@ -184,6 +194,10 @@ actor Database {
             sqlite3_free(err)
             throw DatabaseError.exec(msg)
         }
+
+        // Migration for databases created before mirror mode: add the column if
+        // it's missing. A duplicate-column error here is expected and ignored.
+        sqlite3_exec(db, "ALTER TABLE settings ADD COLUMN mirrorEnabled INTEGER NOT NULL DEFAULT 0;", nil, nil, nil)
     }
 
     // MARK: - Settings
@@ -191,7 +205,7 @@ actor Database {
     func loadSettings() throws -> AppSettings {
         let stmt = try prepare("""
         SELECT destinationBookmark, destinationPath, syncIntervalMinutes,
-               autoSyncEnabled, runAtLogin, notificationsEnabled
+               autoSyncEnabled, runAtLogin, notificationsEnabled, mirrorEnabled
         FROM settings WHERE id = 1;
         """)
         defer { sqlite3_finalize(stmt) }
@@ -203,7 +217,8 @@ actor Database {
                 syncIntervalMinutes: Int(sqlite3_column_int(stmt, 2)),
                 autoSyncEnabled: sqlite3_column_int(stmt, 3) != 0,
                 runAtLogin: sqlite3_column_int(stmt, 4) != 0,
-                notificationsEnabled: sqlite3_column_int(stmt, 5) != 0
+                notificationsEnabled: sqlite3_column_int(stmt, 5) != 0,
+                mirrorEnabled: sqlite3_column_int(stmt, 6) != 0
             )
         }
 
@@ -217,15 +232,16 @@ actor Database {
         let stmt = try prepare("""
         INSERT INTO settings
             (id, destinationBookmark, destinationPath, syncIntervalMinutes,
-             autoSyncEnabled, runAtLogin, notificationsEnabled, schemaVersion)
-        VALUES (1, ?, ?, ?, ?, ?, ?, 1)
+             autoSyncEnabled, runAtLogin, notificationsEnabled, mirrorEnabled, schemaVersion)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(id) DO UPDATE SET
             destinationBookmark = excluded.destinationBookmark,
             destinationPath = excluded.destinationPath,
             syncIntervalMinutes = excluded.syncIntervalMinutes,
             autoSyncEnabled = excluded.autoSyncEnabled,
             runAtLogin = excluded.runAtLogin,
-            notificationsEnabled = excluded.notificationsEnabled;
+            notificationsEnabled = excluded.notificationsEnabled,
+            mirrorEnabled = excluded.mirrorEnabled;
         """)
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, s.destinationBookmark)
@@ -234,6 +250,7 @@ actor Database {
         bind(stmt, 4, s.autoSyncEnabled)
         bind(stmt, 5, s.runAtLogin)
         bind(stmt, 6, s.notificationsEnabled)
+        bind(stmt, 7, s.mirrorEnabled)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw DatabaseError.step(String(cString: sqlite3_errmsg(db)))
         }
@@ -461,5 +478,55 @@ actor Database {
             ))
         }
         return result
+    }
+
+    // MARK: - Archived items (mirror mode)
+
+    func insertArchived(_ records: [ArchivedRecord]) throws {
+        guard !records.isEmpty else { return }
+        try exec("BEGIN TRANSACTION;")
+        let stmt = try prepare("""
+        INSERT INTO archived_items (relativePath, archivePath, deletedAt, bytes, sourceId)
+        VALUES (?, ?, ?, ?, ?);
+        """)
+        for r in records {
+            sqlite3_reset(stmt)
+            bind(stmt, 1, r.relativePath)
+            bind(stmt, 2, r.archivePath)
+            bind(stmt, 3, r.deletedAt.timeIntervalSince1970)
+            bind(stmt, 4, r.bytes)
+            bindOptionalInt(stmt, 5, r.sourceId)
+            _ = sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+        try exec("COMMIT;")
+    }
+
+    func fetchArchived(limit: Int = 1000) throws -> [ArchivedItem] {
+        let stmt = try prepare("""
+        SELECT id, relativePath, archivePath, deletedAt, bytes, sourceId
+        FROM archived_items ORDER BY deletedAt DESC LIMIT ?;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, Int64(limit))
+        var result: [ArchivedItem] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(ArchivedItem(
+                id: sqlite3_column_int64(stmt, 0),
+                relativePath: columnText(stmt, 1),
+                archivePath: columnText(stmt, 2),
+                deletedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3)),
+                bytes: sqlite3_column_int64(stmt, 4),
+                sourceId: columnOptionalInt(stmt, 5)
+            ))
+        }
+        return result
+    }
+
+    func deleteArchived(id: Int64) throws {
+        let stmt = try prepare("DELETE FROM archived_items WHERE id = ?;")
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, id)
+        _ = sqlite3_step(stmt)
     }
 }

@@ -13,5 +13,12 @@
 	-->
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<!--
+	  Required so the Hardened Runtime allows sending Apple events to Music /
+	  Spotify (Now Playing panel). Without this the events are blocked outright
+	  and macOS never shows the Automation permission prompt.
+	-->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>

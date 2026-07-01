@@ -14,12 +14,16 @@ import AppKit
 @MainActor
 @Observable
 final class AppState {
+    /// Shared instance used by every surface (menu-bar popover, notch HUD).
+    static let shared = AppState()
+
     // Persisted configuration
     var settings: AppSettings = .default
     var sources: [Source] = []
     var excludes: [ExcludeRule] = []
     var recentRuns: [SyncRun] = []
     var recentEvents: [SyncEvent] = []
+    var archivedItems: [ArchivedItem] = []
 
     // Live UI state
     var status: SyncStatus = .idle
@@ -74,7 +78,12 @@ final class AppState {
             if let d = lastSyncDate { return "Last sync \(Self.relative(d))" }
             return sources.isEmpty ? "Add folders to begin" : "Up to date"
         case .syncing:
-            if let p = progress { return "\(p.filesProcessed.formatted()) / \(p.filesTotalEstimate.formatted()) files" }
+            if let p = progress {
+                if p.filesTotalEstimate > 0 {
+                    return "\(p.filesProcessed.formatted()) / \(p.filesTotalEstimate.formatted()) files"
+                }
+                return "Copying \(p.filesProcessed.formatted()) file(s)…"
+            }
             return "Working…"
         case .paused:  return "Destination drive disconnected"
         case .error:   return lastErrorMessage.isEmpty ? "Last sync reported errors" : lastErrorMessage
@@ -94,6 +103,7 @@ final class AppState {
             excludes = try await store.excludes()
             recentRuns = try await store.recentRuns()
             recentEvents = try await store.recentEvents()
+            archivedItems = try await store.archivedItems()
         } catch {
             AppLog.shared.log("Bootstrap error: \(error)")
         }
@@ -160,6 +170,9 @@ final class AppState {
             guard let self else { return }
             if let runs = try? await configStore?.recentRuns() { self.recentRuns = runs }
             if let events = try? await configStore?.recentEvents() { self.recentEvents = events }
+            if !result.archived.isEmpty, let items = try? await configStore?.archivedItems() {
+                self.archivedItems = items
+            }
         }
 
         let driveName = drive.volumeName.isEmpty ? "the drive" : drive.volumeName
@@ -190,9 +203,46 @@ final class AppState {
         let wasConnected = drive.isConnected
         drive = VolumeMonitor.driveInfo(for: url, expectMarker: true)
         if !drive.isConnected && !isSyncing { status = sources.isEmpty ? .idle : .paused }
-        // Drive just appeared → kick a full reconcile.
-        if drive.isConnected && !wasConnected && settings.autoSyncEnabled {
-            requestSync(full: true)
+        // Drive just appeared.
+        if drive.isConnected && !wasConnected {
+            // Empty app + a drive that remembers its setup ⇒ adopt it.
+            if sources.isEmpty { importFromDiskIfPossible(url) }
+            writeManifest()
+            if settings.autoSyncEnabled { requestSync(full: true) }
+        }
+    }
+
+    // MARK: - Disk manifest (the drive remembers its setup)
+
+    /// Persist the current config onto the drive so it can be restored later.
+    func writeManifest() {
+        guard let destinationURL, drive.isConnected else { return }
+        let manifest = DiskManifest(
+            updatedAt: Date(),
+            deviceName: Host.current().localizedName ?? "Mac",
+            sources: sources.map { .init(path: $0.path, isDirectory: $0.isDirectory, enabled: $0.enabled) },
+            excludes: excludes.map(\.pattern),
+            mirrorEnabled: settings.mirrorEnabled
+        )
+        let root = destinationURL
+        Task.detached { manifest.write(toDestination: root) }
+    }
+
+    /// Adopt the drive's remembered folders when this app has none configured.
+    private func importFromDiskIfPossible(_ root: URL) {
+        guard sources.isEmpty, let manifest = DiskManifest.read(fromDestination: root),
+              !manifest.sources.isEmpty, let store = configStore else { return }
+        settings.mirrorEnabled = manifest.mirrorEnabled
+        saveSettings()
+        Task { [weak self] in
+            var added: [Source] = []
+            for s in manifest.sources where FileManager.default.fileExists(atPath: s.path) {
+                if let src = try? await store.addSource(url: URL(fileURLWithPath: s.path)) { added.append(src) }
+            }
+            guard let self else { return }
+            self.sources.append(contentsOf: added)
+            self.restartWatching()
+            if self.drive.isConnected { self.requestSync(full: true) }
         }
     }
 
@@ -212,9 +262,15 @@ final class AppState {
 
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            let marker = url.appendingPathComponent(Defaults.markerFileName)
-            let contents = "DiskSync target. Created \(ISO8601DateFormatter().string(from: Date())).\n"
-            try contents.data(using: .utf8)?.write(to: marker)
+            // Seed the marker as a config manifest so the drive remembers its setup.
+            let manifest = DiskManifest(
+                updatedAt: Date(),
+                deviceName: Host.current().localizedName ?? "Mac",
+                sources: sources.map { .init(path: $0.path, isDirectory: $0.isDirectory, enabled: $0.enabled) },
+                excludes: excludes.map(\.pattern),
+                mirrorEnabled: settings.mirrorEnabled
+            )
+            manifest.write(toDestination: url)
         } catch {
             AppLog.shared.log("Failed to write marker at \(url.path): \(error)")
             presentError("Couldn't prepare the destination: \(error.localizedDescription)")
@@ -307,6 +363,7 @@ final class AppState {
     func saveSettings() {
         let snapshot = settings
         Task { [configStore] in try? await configStore?.saveSettings(snapshot) }
+        writeManifest()
     }
 
     func setAutoSync(_ on: Bool) {
@@ -318,6 +375,57 @@ final class AppState {
     func setNotifications(_ on: Bool) {
         settings.notificationsEnabled = on
         saveSettings()
+    }
+
+    func setMirror(_ on: Bool) {
+        settings.mirrorEnabled = on
+        saveSettings()
+        // A fresh full reconcile applies the new policy (archives orphans).
+        if on && drive.isConnected { requestSync(full: true) }
+    }
+
+    // MARK: - Archive (recovery)
+
+    /// Restore an archived item back to its original location on the Mac.
+    func restoreArchived(_ item: ArchivedItem) {
+        guard let destinationURL else { return }
+        let archiveSource = destinationURL
+            .appendingPathComponent(Defaults.archiveFolderName)
+            .appendingPathComponent(item.archivePath)
+        let restoreTarget = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(item.relativePath)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: archiveSource.path) else {
+            presentError("The archived file is not on the connected drive.")
+            return
+        }
+        do {
+            try fm.createDirectory(at: restoreTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fm.fileExists(atPath: restoreTarget.path) { try fm.removeItem(at: restoreTarget) }
+            try fm.copyItem(at: archiveSource, to: restoreTarget)
+            try? fm.removeItem(at: archiveSource)          // moved back out of the archive
+        } catch {
+            presentError("Restore failed: \(error.localizedDescription)")
+            return
+        }
+        forgetArchived(item)
+    }
+
+    /// Permanently remove an archived item from the drive.
+    func deleteArchivedPermanently(_ item: ArchivedItem) {
+        if let destinationURL {
+            let archiveSource = destinationURL
+                .appendingPathComponent(Defaults.archiveFolderName)
+                .appendingPathComponent(item.archivePath)
+            try? FileManager.default.removeItem(at: archiveSource)
+        }
+        forgetArchived(item)
+    }
+
+    private func forgetArchived(_ item: ArchivedItem) {
+        archivedItems.removeAll { $0.id == item.id }
+        let id = item.id
+        Task { [configStore] in try? await configStore?.removeArchived(id) }
     }
 
     func setSyncInterval(_ minutes: Int) {
@@ -351,7 +459,7 @@ final class AppState {
 
     // MARK: - Sync requests
 
-    private func requestSync(full: Bool, sourceIDs: Set<Int64>? = nil) {
+    private func requestSync(full: Bool, sourceIDs: Set<Int64>? = nil, changedPaths: [String]? = nil) {
         guard let destinationURL else { return }
         // Refuse to write unless the marker confirms the target.
         let markerURL = destinationURL.appendingPathComponent(Defaults.markerFileName)
@@ -387,7 +495,9 @@ final class AppState {
 
         guard !resolved.isEmpty else { return }
         let request = SyncRequest(sources: resolved, destinationRoot: destinationURL,
-                                  excludes: excludes, isFull: full)
+                                  excludes: excludes, isFull: full,
+                                  changedPaths: full ? nil : changedPaths,
+                                  mirrorEnabled: settings.mirrorEnabled)
         Task { [syncManager] in await syncManager.enqueue(request) }
     }
 
@@ -396,6 +506,7 @@ final class AppState {
     private func startWatching() { restartWatching() }
 
     private func restartWatching() {
+        writeManifest()   // sources changed → update the drive's memory
         watcher?.stop()
         let paths = sources.filter { $0.enabled && $0.isDirectory }.map(\.path)
             + sources.filter { $0.enabled && !$0.isDirectory }.map(\.path)
@@ -409,17 +520,13 @@ final class AppState {
 
     private func handleFileChanges(_ changedPaths: Set<String>) {
         guard settings.autoSyncEnabled, drive.isConnected else { return }
-        var affected = Set<Int64>()
-        for source in sources where source.enabled {
-            for changed in changedPaths {
-                if changed == source.path || changed.hasPrefix(source.path + "/") {
-                    affected.insert(source.id)
-                    break
-                }
-            }
+        // Keep only paths that live under an enabled source, and sync *just those*
+        // paths — never re-walk the whole tree on every file event.
+        let relevant = changedPaths.filter { path in
+            sources.contains { $0.enabled && (path == $0.path || path.hasPrefix($0.path + "/")) }
         }
-        guard !affected.isEmpty else { return }
-        requestSync(full: false, sourceIDs: affected)
+        guard !relevant.isEmpty else { return }
+        requestSync(full: false, changedPaths: Array(relevant))
     }
 
     private func startMonitors() {

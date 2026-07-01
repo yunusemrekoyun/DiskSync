@@ -27,5 +27,8 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>DiskSync — 100% local, offline folder mirroring.</string>
+	<!-- Needed to read/control Music & Spotify for the Now Playing panel. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>DiskSync controls Music and Spotify to show and manage what's currently playing.</string>
 </dict>
 </plist>

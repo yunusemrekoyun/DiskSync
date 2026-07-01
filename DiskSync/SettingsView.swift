@@ -20,6 +20,8 @@ struct SettingsView: View {
                 .tabItem { Label("Folders", systemImage: "folder") }
             ExcludesSettings(app: app)
                 .tabItem { Label("Excludes", systemImage: "nosign") }
+            ArchiveSettings(app: app)
+                .tabItem { Label("Archive", systemImage: "clock.arrow.circlepath") }
             ActivityView(app: app)
                 .tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }
             AboutSettings()
@@ -82,6 +84,15 @@ private struct GeneralSettings: View {
                             .labelsHidden()
                     }
                 }
+            }
+
+            Section("Mirror mode") {
+                Toggle("Mirror deletions to the drive", isOn: Binding(
+                    get: { app.settings.mirrorEnabled },
+                    set: { app.setMirror($0) }))
+                Text("When on, items you delete or move on this Mac are relocated into a recoverable archive on the drive (\(Defaults.archiveFolderName)) instead of staying as extra copies. Nothing is ever hard-deleted — restore anything from the Archive tab.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -200,6 +211,87 @@ private struct ExcludesSettings: View {
     private func add() {
         app.addExclude(pattern: newPattern)
         newPattern = ""
+    }
+}
+
+// MARK: - Archive (recovery)
+
+private struct ArchiveSettings: View {
+    let app: AppState
+    @State private var search = ""
+
+    private var items: [ArchivedItem] {
+        guard !search.isEmpty else { return app.archivedItems }
+        return app.archivedItems.filter { $0.relativePath.localizedCaseInsensitiveContains(search) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
+                Text("Archived (deleted) items")
+                    .font(.headline)
+                Spacer()
+                if !app.archivedItems.isEmpty {
+                    TextField("Search", text: $search)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 160)
+                }
+                if !app.drive.isConnected {
+                    Label("Drive disconnected", systemImage: "externaldrive.badge.xmark")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .padding()
+
+            if app.archivedItems.isEmpty {
+                Spacer()
+                VStack(spacing: 6) {
+                    Image(systemName: "tray").font(.title).foregroundStyle(.secondary)
+                    Text("Nothing archived")
+                        .font(.callout.weight(.medium))
+                    Text("When mirror mode is on, files you delete on this Mac are kept here and can be restored.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                }
+                Spacer()
+            } else {
+                List {
+                    ForEach(items) { item in
+                        HStack(spacing: 10) {
+                            Image(systemName: "doc")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.name).font(.body.weight(.medium)).lineLimit(1)
+                                Text(item.relativePath)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text(Format.bytes(item.bytes)).font(.caption2).foregroundStyle(.secondary)
+                                Text(Format.dayTime(item.deletedAt)).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Button("Restore") { app.restoreArchived(item) }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(!app.drive.isConnected)
+                            Button {
+                                app.deleteArchivedPermanently(item)
+                            } label: { Image(systemName: "trash") }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .help("Delete permanently")
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
     }
 }
 

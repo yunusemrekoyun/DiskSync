@@ -22,11 +22,29 @@ nonisolated struct ResolvedSource: Sendable {
 }
 
 /// One unit of work handed to the engine.
+///
+/// `changedPaths` (set only for FSEvents-driven incremental runs) restricts the
+/// work to the exact paths that changed, instead of re-walking the whole tree.
+/// A `nil` `changedPaths` (or `isFull == true`) means a full reconcile.
 nonisolated struct SyncRequest: Sendable {
     var sources: [ResolvedSource]
     var destinationRoot: URL
     var excludes: [ExcludeRule]
     var isFull: Bool
+    var changedPaths: [String]?
+    /// Mirror mode: relocate destination items whose source no longer exists
+    /// into the on-drive archive (recoverable), instead of leaving them.
+    var mirrorEnabled: Bool
+}
+
+/// A file mirror mode moved into the archive (returned by the engine, then
+/// persisted so the recovery UI can list and restore it).
+nonisolated struct ArchivedRecord: Sendable {
+    var relativePath: String
+    var archivePath: String
+    var deletedAt: Date
+    var bytes: Int64
+    var sourceId: Int64?
 }
 
 /// A per-file event captured during a run (persisted to SQLite afterwards).
@@ -50,9 +68,11 @@ nonisolated struct SyncRunResult: Sendable {
     var skipped: Int
     var isFull: Bool
     var events: [PendingEvent]
+    var archived: [ArchivedRecord]
 
     var summary: String {
         var parts = ["\(filesCopied) file(s)", ByteCountFormatter.string(fromByteCount: bytesCopied, countStyle: .file)]
+        if !archived.isEmpty { parts.append("\(archived.count) archived") }
         if conflicts > 0 { parts.append("\(conflicts) conflict(s)") }
         if errorsCount > 0 { parts.append("\(errorsCount) error(s)") }
         return parts.joined(separator: " · ")
@@ -117,16 +137,21 @@ actor SyncManager {
         return nil
     }
 
-    /// Merge two requests: union sources by id, "full" wins, latest dest/excludes.
+    /// Merge two requests: union sources by id, "full" wins, latest dest/excludes,
+    /// and accumulate changed paths (dropped entirely once any request is full).
     private nonisolated static func merge(_ existing: SyncRequest?, _ new: SyncRequest) -> SyncRequest {
         guard let existing else { return new }
         var byID: [Int64: ResolvedSource] = [:]
         for s in existing.sources { byID[s.id] = s }
         for s in new.sources { byID[s.id] = s }
+        let isFull = existing.isFull || new.isFull
+        let changed: [String]? = isFull ? nil : ((existing.changedPaths ?? []) + (new.changedPaths ?? []))
         return SyncRequest(sources: Array(byID.values),
                            destinationRoot: new.destinationRoot,
                            excludes: new.excludes,
-                           isFull: existing.isFull || new.isFull)
+                           isFull: isFull,
+                           changedPaths: changed,
+                           mirrorEnabled: existing.mirrorEnabled || new.mirrorEnabled)
     }
 
     // MARK: - Core algorithm (nonisolated: pure file work, no actor state)
@@ -136,96 +161,209 @@ actor SyncManager {
         let started = Date()
         let fm = FileManager.default
         let log = AppLog.shared
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
 
         var copied = 0, updated = 0, skipped = 0, conflicts = 0, errors = 0
         var bytes: Int64 = 0
         var events: [PendingEvent] = []
-
-        // Estimate total file count for the progress bar.
-        let total = request.sources.reduce(0) { $0 + countFiles(source: $1, excludes: request.excludes, fm: fm) }
+        var archived: [ArchivedRecord] = []
         var processed = 0
-        progress(SyncProgress(filesProcessed: 0, filesTotalEstimate: total, currentPath: ""))
 
-        log.log("Sync started (\(request.isFull ? "full reconcile" : "incremental"), \(request.sources.count) source(s), ~\(total) files)")
+        let destRootPath = request.destinationRoot.standardizedFileURL.path
+        let archiveRoot = request.destinationRoot.appendingPathComponent(Defaults.archiveFolderName)
 
         func record(_ type: SyncEventType, _ rel: String, _ sourceId: Int64?, _ message: String) {
             events.append(PendingEvent(timestamp: Date(), type: type, relativePath: rel, sourceId: sourceId, message: message))
         }
 
-        for source in request.sources {
-            let destBase = request.destinationRoot.appendingPathComponent(source.homeRelativePath)
+        /// A destination path's location relative to the destination root
+        /// (== the home-relative path, since the drive mirrors `~`).
+        func relToDestRoot(_ url: URL) -> String {
+            let p = url.standardizedFileURL.path
+            return p.hasPrefix(destRootPath + "/") ? String(p.dropFirst(destRootPath.count + 1)) : url.lastPathComponent
+        }
 
-            if source.isDirectory {
-                let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
-                guard let enumerator = fm.enumerator(at: source.url,
-                                                     includingPropertiesForKeys: Array(keys),
-                                                     options: [],
-                                                     errorHandler: { url, error in
-                                                         log.log("Enumerate error at \(url.path): \(error.localizedDescription)")
-                                                         return true
-                                                     }) else { continue }
-
-                while let item = enumerator.nextObject() as? URL {
-                    let rv = try? item.resourceValues(forKeys: keys)
-                    let isDir = rv?.isDirectory ?? false
-                    let isLink = rv?.isSymbolicLink ?? false
-                    let relWithin = relativePath(of: item, base: source.url)
-                    let displayRel = source.homeRelativePath + "/" + relWithin
-
-                    // Excludes: match by name or any relative-path component.
-                    if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
-                                      excludes: request.excludes, sourceId: source.id) {
-                        if isDir { enumerator.skipDescendants() }
-                        skipped += 1
-                        continue
-                    }
-
-                    let destURL = destBase.appendingPathComponent(relWithin)
-
-                    if isLink {
-                        copySymlink(from: item, to: destURL, fm: fm) { type, msg in
-                            if type == .error { errors += 1 } else if type == .copied { copied += 1 }
-                            record(type, displayRel, source.id, msg)
-                        }
-                    } else if isDir {
-                        try? fm.createDirectory(at: destURL, withIntermediateDirectories: true)
-                    } else {
-                        let outcome = copyFileIfNeeded(from: item, to: destURL, srcValues: rv, fm: fm, log: log)
-                        apply(outcome, rel: displayRel, sourceId: source.id,
-                              copied: &copied, updated: &updated, skipped: &skipped,
-                              conflicts: &conflicts, errors: &errors, bytes: &bytes, record: record)
-                    }
-
-                    processed += 1
-                    if processed % 25 == 0 {
-                        progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: max(total, processed), currentPath: displayRel))
-                    }
-                }
-            } else {
-                // Single-file source.
-                let rv = try? source.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isSymbolicLinkKey])
-                if rv?.isSymbolicLink == true {
-                    copySymlink(from: source.url, to: destBase, fm: fm) { type, msg in
-                        if type == .error { errors += 1 } else if type == .copied { copied += 1 }
-                        record(type, source.homeRelativePath, source.id, msg)
-                    }
-                } else {
-                    let outcome = copyFileIfNeeded(from: source.url, to: destBase, srcValues: rv, fm: fm, log: log)
-                    apply(outcome, rel: source.homeRelativePath, sourceId: source.id,
-                          copied: &copied, updated: &updated, skipped: &skipped,
-                          conflicts: &conflicts, errors: &errors, bytes: &bytes, record: record)
-                }
-                processed += 1
+        /// Move one destination file into the archive (mirror mode). Never a
+        /// hard delete; the recovery UI can restore it later.
+        func archiveFile(_ destFile: URL, sourceId: Int64?) {
+            // Never archive things already inside the archive folder.
+            if destFile.path.hasPrefix(archiveRoot.standardizedFileURL.path) { return }
+            let relHome = relToDestRoot(destFile)
+            var target = archiveRoot.appendingPathComponent(relHome)
+            if fm.fileExists(atPath: target.path) {
+                let stamp = Int(Date().timeIntervalSince1970)
+                target = target.deletingLastPathComponent()
+                    .appendingPathComponent(target.lastPathComponent + ".\(stamp)")
+            }
+            let size = ((try? destFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize).map(Int64.init) ?? 0
+            do {
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.moveItem(at: destFile, to: target)
+                let archiveRel = relToDestRoot(target)
+                archived.append(ArchivedRecord(relativePath: relHome, archivePath: archiveRel,
+                                               deletedAt: Date(), bytes: size, sourceId: sourceId))
+            } catch {
+                errors += 1
+                record(.error, relHome, sourceId, "Archive failed: \(error.localizedDescription)")
             }
         }
 
-        progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: max(total, processed), currentPath: ""))
+        /// Archive a destination file, or all files under a destination folder.
+        func archiveDestination(_ destURL: URL, sourceId: Int64?) {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: destURL.path, isDirectory: &isDir) else { return }
+            if isDir.boolValue {
+                guard let en = fm.enumerator(at: destURL, includingPropertiesForKeys: [.isDirectoryKey],
+                                             options: [], errorHandler: { _, _ in true }) else { return }
+                var files: [URL] = []
+                while let f = en.nextObject() as? URL {
+                    if (try? f.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true { files.append(f) }
+                }
+                for f in files { archiveFile(f, sourceId: sourceId) }
+            } else {
+                archiveFile(destURL, sourceId: sourceId)
+            }
+        }
+
+        /// Mirror reverse-scan: archive destination files whose source is gone.
+        func reverseScan(_ source: ResolvedSource) {
+            let destBase = request.destinationRoot.appendingPathComponent(source.homeRelativePath)
+            guard fm.fileExists(atPath: destBase.path) else { return }
+            guard let enumerator = fm.enumerator(at: destBase,
+                                                 includingPropertiesForKeys: [.isDirectoryKey],
+                                                 options: [], errorHandler: { _, _ in true }) else { return }
+            var orphans: [URL] = []
+            while let item = enumerator.nextObject() as? URL {
+                if (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
+                let relWithin = relativePath(of: item, base: destBase)
+                if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
+                                  excludes: request.excludes, sourceId: source.id) { continue }
+                let sourceItem = source.url.appendingPathComponent(relWithin)
+                if !fm.fileExists(atPath: sourceItem.path) { orphans.append(item) }
+            }
+            // Archive after enumeration so we don't mutate the tree mid-walk.
+            for orphan in orphans { archiveFile(orphan, sourceId: source.id) }
+        }
+
+        // Copy a single entry (file / symlink / directory marker).
+        func copyOne(_ url: URL, _ rv: URLResourceValues?, _ source: ResolvedSource) {
+            let isDir = rv?.isDirectory ?? false
+            let isLink = rv?.isSymbolicLink ?? false
+            let relWithin = relativePath(of: url, base: source.url)
+            let relHome = relWithin.isEmpty ? source.homeRelativePath : source.homeRelativePath + "/" + relWithin
+            let dest = request.destinationRoot.appendingPathComponent(relHome)
+
+            if isLink {
+                copySymlink(from: url, to: dest, fm: fm) { type, msg in
+                    if type == .error { errors += 1 } else if type == .copied { copied += 1 }
+                    record(type, relHome, source.id, msg)
+                }
+            } else if isDir {
+                try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            } else {
+                switch copyFileIfNeeded(from: url, to: dest, srcValues: rv, fm: fm, log: log) {
+                case .copied(let size):
+                    copied += 1; bytes += size
+                    record(.copied, relHome, source.id, "Copied new file")
+                case .updated(let size, let conflict):
+                    updated += 1; bytes += size
+                    if conflict {
+                        conflicts += 1
+                        record(.conflict, relHome, source.id, "Destination was newer; overwrote (source-of-truth)")
+                    } else {
+                        record(.updated, relHome, source.id, "Updated changed file")
+                    }
+                case .skipped:
+                    skipped += 1
+                case .error(let msg):
+                    errors += 1
+                    record(.error, relHome, source.id, msg)
+                }
+            }
+            processed += 1
+            if processed % 50 == 0 {
+                progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: 0, currentPath: relHome))
+            }
+        }
+
+        // Enumerate a directory tree once and copy everything (respecting excludes).
+        func syncTree(_ root: URL, _ source: ResolvedSource) {
+            guard let enumerator = fm.enumerator(at: root,
+                                                 includingPropertiesForKeys: Array(keys),
+                                                 options: [],
+                                                 errorHandler: { url, error in
+                                                     log.log("Enumerate error at \(url.path): \(error.localizedDescription)")
+                                                     return true
+                                                 }) else { return }
+            while let item = enumerator.nextObject() as? URL {
+                let rv = try? item.resourceValues(forKeys: keys)
+                let relWithin = relativePath(of: item, base: source.url)
+                if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
+                                  excludes: request.excludes, sourceId: source.id) {
+                    if rv?.isDirectory == true { enumerator.skipDescendants() }
+                    skipped += 1
+                    continue
+                }
+                copyOne(item, rv, source)
+            }
+        }
+
+        let isFull = request.isFull || request.changedPaths == nil
+        log.log("Sync started (\(isFull ? "full reconcile" : "incremental"), \(request.sources.count) source(s))")
+        progress(SyncProgress(filesProcessed: 0, filesTotalEstimate: 0, currentPath: ""))
+
+        if isFull {
+            // Full reconcile: walk every enabled source.
+            for source in request.sources {
+                if source.isDirectory {
+                    syncTree(source.url, source)
+                } else {
+                    let rv = try? source.url.resourceValues(forKeys: keys)
+                    copyOne(source.url, rv, source)
+                }
+            }
+            // Mirror mode: archive destination files whose source no longer exists.
+            if request.mirrorEnabled {
+                for source in request.sources where source.isDirectory { reverseScan(source) }
+            }
+        } else {
+            // Targeted: only the exact paths FSEvents reported — no full walk.
+            var seen = Set<String>()
+            for path in request.changedPaths ?? [] where seen.insert(path).inserted {
+                guard let source = request.sources.first(where: {
+                    path == $0.url.path || path.hasPrefix($0.url.path + "/")
+                }) else { continue }
+                let url = URL(fileURLWithPath: path)
+                let relWithin = relativePath(of: url, base: source.url)
+                if matchesExclude(name: url.lastPathComponent, relPath: relWithin,
+                                  excludes: request.excludes, sourceId: source.id) { continue }
+
+                if let rv = try? url.resourceValues(forKeys: keys) {
+                    if rv.isDirectory == true {
+                        syncTree(url, source)
+                    } else {
+                        copyOne(url, rv, source)
+                    }
+                } else {
+                    // Source path is gone. Additive mode leaves the drive copy;
+                    // mirror mode relocates it to the archive.
+                    if request.mirrorEnabled {
+                        let relHome = relWithin.isEmpty ? source.homeRelativePath
+                                                        : source.homeRelativePath + "/" + relWithin
+                        archiveDestination(request.destinationRoot.appendingPathComponent(relHome),
+                                           sourceId: source.id)
+                    }
+                }
+            }
+        }
+
+        progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: 0, currentPath: ""))
 
         let status = errors > 0 ? "completed_with_errors" : "completed"
         let result = SyncRunResult(startedAt: started, finishedAt: Date(), status: status,
                                    filesCopied: copied + updated, bytesCopied: bytes,
                                    errorsCount: errors, conflicts: conflicts, skipped: skipped,
-                                   isFull: request.isFull, events: events)
+                                   isFull: request.isFull, events: events, archived: archived)
         log.log("Sync finished: \(result.summary)")
         return result
     }
@@ -237,30 +375,6 @@ actor SyncManager {
         case updated(Int64, conflict: Bool)
         case skipped
         case error(String)
-    }
-
-    private nonisolated static func apply(_ outcome: CopyOutcome, rel: String, sourceId: Int64?,
-                              copied: inout Int, updated: inout Int, skipped: inout Int,
-                              conflicts: inout Int, errors: inout Int, bytes: inout Int64,
-                              record: (SyncEventType, String, Int64?, String) -> Void) {
-        switch outcome {
-        case .copied(let size):
-            copied += 1; bytes += size
-            record(.copied, rel, sourceId, "Copied new file")
-        case .updated(let size, let conflict):
-            updated += 1; bytes += size
-            if conflict {
-                conflicts += 1
-                record(.conflict, rel, sourceId, "Destination was newer; overwrote (source-of-truth)")
-            } else {
-                record(.updated, rel, sourceId, "Updated changed file")
-            }
-        case .skipped:
-            skipped += 1
-        case .error(let msg):
-            errors += 1
-            record(.error, rel, sourceId, msg)
-        }
     }
 
     /// Compare-and-copy a single file. Newer/missing/size-differs ⇒ copy.
@@ -369,26 +483,5 @@ actor SyncManager {
     /// POSIX fnmatch-based glob test.
     private nonisolated static func globMatch(_ pattern: String, _ string: String) -> Bool {
         fnmatch(pattern, string, 0) == 0
-    }
-
-    /// Lightweight pre-pass to estimate the number of files for progress.
-    private nonisolated static func countFiles(source: ResolvedSource, excludes: [ExcludeRule], fm: FileManager) -> Int {
-        guard source.isDirectory else { return 1 }
-        guard let enumerator = fm.enumerator(at: source.url,
-                                             includingPropertiesForKeys: [.isDirectoryKey],
-                                             options: [],
-                                             errorHandler: { _, _ in true }) else { return 0 }
-        var count = 0
-        while let item = enumerator.nextObject() as? URL {
-            let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            let relWithin = relativePath(of: item, base: source.url)
-            if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
-                              excludes: excludes, sourceId: source.id) {
-                if isDir { enumerator.skipDescendants() }
-                continue
-            }
-            if !isDir { count += 1 }
-        }
-        return count
     }
 }
