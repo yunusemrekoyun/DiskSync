@@ -38,7 +38,13 @@ struct NowPlayingView: View {
 
     private var mainPanel: some View {
         VStack(spacing: 12) {
-            if media.hasTrack { trackView } else { emptyView }
+            if media.automationDenied {
+                deniedView
+            } else if media.hasTrack {
+                trackView
+            } else {
+                emptyView
+            }
             Divider().opacity(0.2)
             volumeRow
         }
@@ -113,6 +119,23 @@ struct NowPlayingView: View {
             Text("Nothing playing").font(.headline)
             Text("Play something in Apple Music or Spotify.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+    }
+
+    /// Shown when the user has denied Automation permission — the tab would
+    /// otherwise sit empty forever with no way forward.
+    private var deniedView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "lock.shield").font(.system(size: 30)).foregroundStyle(.secondary)
+            Text("Permission needed").font(.headline)
+            Text("Allow ProfessorNotch to control Music & Spotify to show what's playing.")
+                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Open Automation Settings") { media.openAutomationSettings() }
+                .buttonStyle(.glass)
+                .font(.caption)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)

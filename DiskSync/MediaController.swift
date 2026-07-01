@@ -59,6 +59,10 @@ final class MediaController {
     var artworkURL: String = ""
     var artwork: NSImage?         // real cover art (fetched), nil ⇒ fall back to icon
 
+    /// True when macOS is blocking Apple Events to Music/Spotify because the
+    /// user declined the Automation permission — surfaced with a fix link.
+    var automationDenied = false
+
     private var lastArtKey = ""
 
     var hasTrack: Bool { source != .none && !title.isEmpty }
@@ -76,7 +80,9 @@ final class MediaController {
     // MARK: - Polling
 
     func refresh() async {
-        if let raw = await Self.runScript(Self.stateScript), raw != "none" {
+        let raw = await Self.runScript(Self.stateScript)
+        automationDenied = Self.lastRunWasDenied
+        if let raw, raw != "none" {
             parse(raw)
         } else {
             source = .none; title = ""; artist = ""; album = ""; isPlaying = false
@@ -85,6 +91,14 @@ final class MediaController {
         }
         await refreshVolume()
         await refreshArtwork()
+    }
+
+    /// Opens System Settings at Privacy → Automation so the user can grant
+    /// control of Music/Spotify.
+    func openAutomationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func parse(_ raw: String) {
@@ -224,6 +238,11 @@ final class MediaController {
     /// up blocked worker threads (thread-pool exhaustion).
     private nonisolated static let scriptInFlight = OSAllocatedUnfairLock(initialState: false)
 
+    /// Error number of the most recent completed script run (0 == success).
+    /// `-1743` is errAEEventNotPermitted — the user denied Automation.
+    private nonisolated static let lastErrorCode = OSAllocatedUnfairLock(initialState: 0)
+    static var lastRunWasDenied: Bool { lastErrorCode.withLock { $0 == -1743 } }
+
     private nonisolated static func rawRunScript(_ source: String) async -> String? {
         let acquired = scriptInFlight.withLock { busy -> Bool in
             if busy { return false }
@@ -236,6 +255,8 @@ final class MediaController {
                 var error: NSDictionary?
                 let script = NSAppleScript(source: source)
                 let result = script?.executeAndReturnError(&error)
+                let code = (error?["NSAppleScriptErrorNumber"] as? Int) ?? 0
+                lastErrorCode.withLock { $0 = code }
                 scriptInFlight.withLock { $0 = false }
                 continuation.resume(returning: result?.stringValue)
             }

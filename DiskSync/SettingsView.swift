@@ -134,6 +134,13 @@ private struct GeneralSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Permissions") {
+                Button("Open Full Disk Access Settings…") { openFullDiskAccess() }
+                Text("Grant ProfessorNotch Full Disk Access so it can back up protected folders (Documents, Downloads, Desktop…) and read iCloud sync status. Without it, some folders may be skipped.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear { intervalText = "\(app.settings.syncIntervalMinutes)" }
@@ -142,6 +149,12 @@ private struct GeneralSettings: View {
     private func commitInterval() {
         if let value = Int(intervalText) { app.setSyncInterval(value) }
         intervalText = "\(app.settings.syncIntervalMinutes)"
+    }
+
+    private func openFullDiskAccess() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
