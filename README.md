@@ -45,8 +45,8 @@ it to **Applications**.
 
 ### Build from source
 ```bash
-git clone https://github.com/yunusemrekoyun/DiskSync.git
-cd DiskSync
+git clone https://github.com/yunusemrekoyun/ProfessorNotch.git
+cd ProfessorNotch
 open DiskSync.xcodeproj
 ```
 In Xcode: select your team under **Signing & Capabilities**, then **⌘R**. The app is a
@@ -115,7 +115,7 @@ Made with ♥ by **Yunus Emre Koyun** — [yunusemrekoyun.com](https://www.yunus
 
 If ProfessorNotch is useful to you, please **⭐ star the repo** — it genuinely helps
 and is the easiest way to support the project. Found a bug or have an idea? Open an
-[issue](https://github.com/yunusemrekoyun/DiskSync/issues).
+[issue](https://github.com/yunusemrekoyun/ProfessorNotch/issues).
 
 ## License
 

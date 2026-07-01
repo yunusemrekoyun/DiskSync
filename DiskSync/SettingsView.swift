@@ -362,7 +362,7 @@ private struct AboutSettings: View {
             Divider().padding(.vertical, 6)
 
             HStack(spacing: 12) {
-                Link(destination: URL(string: "https://github.com/yunusemrekoyun/DiskSync")!) {
+                Link(destination: URL(string: "https://github.com/yunusemrekoyun/ProfessorNotch")!) {
                     Label("Star on GitHub", systemImage: "star.fill")
                 }
                 Link(destination: URL(string: "https://www.yunusemrekoyun.com")!) {
