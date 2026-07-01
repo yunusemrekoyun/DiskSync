@@ -41,6 +41,11 @@ nonisolated enum MediaSource: String, Sendable {
 @MainActor
 @Observable
 final class MediaController {
+    /// Shared so state/artwork survive the NowPlaying view being recreated each
+    /// time the notch opens (avoids a fresh AppleScript + download every open).
+    static let shared = MediaController()
+    private init() {}
+
     var source: MediaSource = .none
     var title = ""
     var artist = ""
@@ -61,14 +66,10 @@ final class MediaController {
         return min(1, max(0, position / duration))
     }
 
-    /// The Music/Spotify app icon, used as artwork (album art needs network for
-    /// Spotify, which we avoid; this stays fully offline).
-    var artworkIcon: NSImage? {
-        guard let bundleID = source.bundleID,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
-    }
+    /// The Music/Spotify app icon (fallback when no cover art). Cached and only
+    /// recomputed when the source app changes — not on every 1.5s poll.
+    var appIcon: NSImage?
+    private var iconSource: MediaSource = .none
 
     // MARK: - Polling
 
@@ -78,15 +79,25 @@ final class MediaController {
         } else {
             source = .none; title = ""; artist = ""; album = ""; isPlaying = false
             position = 0; duration = 0; artworkURL = ""; artwork = nil; lastArtKey = ""
+            iconSource = .none; appIcon = nil
         }
         await refreshVolume()
         await refreshArtwork()
     }
 
     private func parse(_ raw: String) {
-        let f = raw.components(separatedBy: "|")
+        let f = raw.components(separatedBy: "\u{1F}")   // unit separator (matches AppleScript)
         guard f.count >= 7 else { source = .none; title = ""; return }
         source = (f[0] == "Spotify") ? .spotify : (f[0] == "Music" ? .music : .none)
+        if source != iconSource {   // recompute the app icon only when the app changes
+            iconSource = source
+            if let bundleID = source.bundleID,
+               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                appIcon = NSWorkspace.shared.icon(forFile: url.path)
+            } else {
+                appIcon = nil
+            }
+        }
         isPlaying = f[1].contains("playing")
         title = f[2]; artist = f[3]; album = f[4]
         // AppleScript returns numbers in the system locale (e.g. "76,71" in TR);
@@ -107,18 +118,28 @@ final class MediaController {
 
         if artworkURL.hasPrefix("http"), let url = URL(string: artworkURL),
            let data = await Self.downloadData(url) {
+            guard lastArtKey == key else { return }   // track changed mid-download
             artwork = NSImage(data: data)
             return
         }
         if source == .music, let data = await Self.musicArtworkData() {
+            guard lastArtKey == key else { return }
             artwork = NSImage(data: data)
             return
         }
         artwork = nil
     }
 
+    /// Short-timeout session so a hung CDN request can't freeze the poll loop.
+    private nonisolated static let artworkSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 8
+        config.timeoutIntervalForResource = 12
+        return URLSession(configuration: config)
+    }()
+
     private nonisolated static func downloadData(_ url: URL) async -> Data? {
-        (try? await URLSession.shared.data(from: url))?.0
+        (try? await artworkSession.data(from: url))?.0
     }
 
     /// Apple Music's locally-stored artwork bytes (offline).
@@ -140,6 +161,13 @@ final class MediaController {
     func next() async { await control("next track") }
     func previous() async { await control("previous track") }
 
+    /// Bring the app that's currently playing (Music/Spotify) to the front.
+    func openSourceApp() {
+        guard let bundleID = source.bundleID,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     private func control(_ command: String) async {
         guard let app = source.appName else { return }
         _ = await Self.runScript("tell application \"\(app)\" to \(command)")
@@ -149,22 +177,46 @@ final class MediaController {
     // MARK: - Volume
 
     func refreshVolume() async {
+        // Don't fight the user: skip system-volume reads right after a drag,
+        // otherwise a poll can snap the slider back to the old value mid-drag.
+        if let last = lastUserVolumeSet, Date().timeIntervalSince(last) < 1.2 { return }
         if let raw = await Self.runScript("output volume of (get volume settings)"),
            let v = Double(raw) {
             volume = v / 100
         }
     }
 
+    private var volumeTask: Task<Void, Never>?
+    private var lastUserVolumeSet: Date?
+
     func setVolume(_ value: Double) {
-        volume = value
+        volume = value   // update the UI immediately
+        lastUserVolumeSet = Date()
         let level = Int((value * 100).rounded())
-        Task { _ = await Self.runScript("set volume output volume \(level)") }
+        // Debounce: while dragging, only the last value actually hits AppleScript.
+        volumeTask?.cancel()
+        volumeTask = Task {
+            try? await Task.sleep(for: .milliseconds(70))
+            guard !Task.isCancelled else { return }
+            _ = await Self.runScript("set volume output volume \(level)")
+        }
     }
 
     // MARK: - AppleScript
 
-    /// Runs an AppleScript off the main thread and returns its string result.
+    /// Runs an AppleScript off the main thread, bounded by a timeout so a
+    /// hung Music/Spotify can't freeze the poll loop.
     private nonisolated static func runScript(_ source: String) async -> String? {
+        await withTaskGroup(of: String?.self) { group in
+            group.addTask { await rawRunScript(source) }
+            group.addTask { try? await Task.sleep(for: .seconds(3)); return nil }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private nonisolated static func rawRunScript(_ source: String) async -> String? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 var error: NSDictionary?
@@ -179,6 +231,7 @@ final class MediaController {
     /// pipe-delimited snapshot, or "none".
     private nonisolated static let stateScript = """
     set out to "none"
+    set sep to (character id 31)
     tell application "System Events"
         set isSpot to (exists (processes whose name is "Spotify"))
         set isMusic to (exists (processes whose name is "Music"))
@@ -218,7 +271,7 @@ final class MediaController {
                 try
                     set theArt to (artwork url of current track)
                 end try
-                set out to "Spotify|" & theState & "|" & theName & "|" & theArtist & "|" & theAlbum & "|" & thePos & "|" & theDur & "|" & theArt
+                set out to "Spotify" & sep & theState & sep & theName & sep & theArtist & sep & theAlbum & sep & thePos & sep & theDur & sep & theArt
             end tell
         end try
     else if pref is "Music" then
@@ -230,7 +283,7 @@ final class MediaController {
                 set theAlbum to (album of current track)
                 set thePos to (player position)
                 set theDur to (duration of current track)
-                set out to "Music|" & theState & "|" & theName & "|" & theArtist & "|" & theAlbum & "|" & thePos & "|" & theDur & "|"
+                set out to "Music" & sep & theState & sep & theName & sep & theArtist & sep & theAlbum & sep & thePos & sep & theDur & sep & ""
             end tell
         end try
     end if

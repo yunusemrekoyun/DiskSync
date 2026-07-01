@@ -55,6 +55,7 @@ struct SourceRowView: View {
     }
 
     private func loadSubtitle() async {
+        subtitle = "…"   // avoid showing the previous source's size while recomputing
         let path = source.path
         let isDir = source.isDirectory
         let text = await Task.detached(priority: .utility) {

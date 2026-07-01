@@ -18,10 +18,14 @@ nonisolated struct AudioDevice: Identifiable, Sendable, Hashable {
 @MainActor
 @Observable
 final class AudioManager {
+    /// Shared instance so CoreAudio listeners are registered exactly once for
+    /// the app's lifetime (the view is created/destroyed as the notch opens).
+    static let shared = AudioManager()
+
     var outputs: [AudioDevice] = []
     var currentID: AudioDeviceID = 0
 
-    init() {
+    private init() {
         refresh()
         addListeners()
     }

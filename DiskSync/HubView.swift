@@ -12,14 +12,17 @@
 import SwiftUI
 
 enum HubTab: String, CaseIterable, Identifiable {
-    case nowPlaying, sync, apps
+    case nowPlaying, sync, battery, apps, shelf, system
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
         case .nowPlaying: return "play.circle.fill"
         case .sync:       return "externaldrive.fill"
+        case .battery:    return "battery.100"      // battery uses a custom ring icon
         case .apps:       return "square.grid.2x2.fill"
+        case .shelf:      return "tray.full.fill"
+        case .system:     return "gauge.with.dots.needle.67percent"
         }
     }
 
@@ -27,14 +30,28 @@ enum HubTab: String, CaseIterable, Identifiable {
         switch self {
         case .nowPlaying: return "Now Playing"
         case .sync:       return "Sync"
+        case .battery:    return "Battery"
         case .apps:       return "Apps"
+        case .shelf:      return "Shelf"
+        case .system:     return "System"
         }
     }
 }
 
 struct HubView: View {
     @Environment(AppState.self) private var app
-    @State private var tab: HubTab = .nowPlaying
+    let model: NotchViewModel
+    @State private var battery = BatteryManager.shared
+
+    private var tab: HubTab { model.tab }
+    /// Height of the physical notch band; tab icons sit within it (beside the
+    /// notch) and the selected title drops just below it.
+    var topInset: CGFloat = 0
+    /// Center gap reserved for the physical notch between the two tab groups.
+    var notchGap: CGFloat = 40
+
+    private var leftTabs: [HubTab] { Array(HubTab.allCases.prefix((HubTab.allCases.count + 1) / 2)) }
+    private var rightTabs: [HubTab] { Array(HubTab.allCases.suffix(HubTab.allCases.count / 2)) }
 
     var body: some View {
         // The black shell + clipping is provided by NotchShell; this is pure content.
@@ -52,35 +69,48 @@ struct HubView: View {
     // MARK: - Tab bar
 
     private var tabBar: some View {
-        HStack(spacing: 4) {
-            ForEach(HubTab.allCases) { item in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { tab = item }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: item.symbol)
-                        if tab == item {
-                            Text(item.title).font(.caption.weight(.semibold))
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .foregroundStyle(tab == item ? .white : .secondary)
-                    .background {
-                        if tab == item {
-                            Capsule().fill(.clear)
-                                .glassEffect(.regular.interactive(), in: .capsule)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
+        VStack(spacing: 2) {
+            // Icon row lives in the notch band: tabs split to either side of the
+            // notch (the center Spacer is the notch gap), nothing behind it.
+            HStack(spacing: 4) {
+                ForEach(leftTabs) { tabButton($0) }
+                Spacer(minLength: notchGap)
+                ForEach(rightTabs) { tabButton($0) }
             }
-            Spacer()
-            // Sync status dot mirrors the engine state.
-            StatusBadge(status: app.status)
+            .frame(height: max(topInset, 34))
+            // Selected tab name, centered just below the notch.
+            Text(tab.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private func tabButton(_ item: HubTab) -> some View {
+        Button {
+            if model.tab != item { Haptics.select() }
+            withAnimation(.easeInOut(duration: 0.18)) { model.tab = item }
+        } label: {
+            Group {
+                if item == .battery {
+                    BatteryRing(level: battery.level,
+                                color: Color(nsColor: battery.ringColor),
+                                diameter: 22)
+                } else {
+                    Image(systemName: item.symbol)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(tab == item ? .white : .secondary)
+                }
+            }
+            .frame(width: 34, height: 34)
+            .background {
+                if tab == item { Circle().fill(.white.opacity(0.16)) }
+            }
+            .contentShape(Rectangle())   // whole frame is clickable, not just the glyph
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Content
@@ -90,33 +120,82 @@ struct HubView: View {
         switch tab {
         case .nowPlaying:
             NowPlayingView()
+        case .battery:
+            BatteryView()
         case .sync:
             syncTab
         case .apps:
             LauncherView()
+        case .shelf:
+            ShelfView()
+        case .system:
+            SystemMonitorView()
         }
     }
 
     private var syncTab: some View {
-        VStack(spacing: 10) {
-            DriveCardView(app: app)
-            HStack {
-                Button {
-                    app.syncNow()
-                } label: {
-                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                        .frame(maxWidth: .infinity)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 10) {
+                HStack {
+                    StatusBadge(status: app.status)
+                    Spacer()
                 }
-                .buttonStyle(.glassProminent)
-                .disabled(!app.canSyncNow)
+                DriveCardView(app: app)
+                CloudStatusRow()
+                HStack {
+                    Button {
+                        app.syncNow()
+                    } label: {
+                        Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(!app.canSyncNow)
 
-                SettingsLink {
-                    Image(systemName: "gearshape")
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                    }
+                    .buttonStyle(.glass)
+
+                    Button {
+                        NSApplication.shared.terminate(nil)
+                    } label: {
+                        Image(systemName: "power")
+                    }
+                    .buttonStyle(.glass)
+                    .help("Quit DiskSync")
                 }
-                .buttonStyle(.glass)
             }
+            .padding(12)
         }
-        .padding(12)
     }
 
+}
+
+/// Compact iCloud Drive activity line for the Sync tab.
+private struct CloudStatusRow: View {
+    @State private var cloud = CloudStatus.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: cloud.isActive ? "arrow.triangle.2.circlepath.icloud.fill" : "icloud")
+                .foregroundStyle(cloud.isActive ? Color.blue : .secondary)
+                .symbolEffect(.pulse, isActive: cloud.isActive)
+            Text("iCloud").font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text(cloud.summary)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(cloud.isActive ? Color.blue : .secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+        .task {
+            // Snapshot on open, then refresh while the Sync tab is visible.
+            while !Task.isCancelled {
+                await cloud.refresh()
+                try? await Task.sleep(for: .seconds(8))
+            }
+        }
+    }
 }

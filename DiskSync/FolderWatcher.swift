@@ -72,6 +72,12 @@ nonisolated final class FolderWatcher: @unchecked Sendable {
     }
 
     func stop() {
+        // Cancel any pending debounce so a torn-down watcher can't fire late.
+        queue.sync {
+            debounceItem?.cancel()
+            debounceItem = nil
+            pending.removeAll()
+        }
         guard let stream else { return }
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)

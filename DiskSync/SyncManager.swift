@@ -171,6 +171,13 @@ actor SyncManager {
 
         let destRootPath = request.destinationRoot.standardizedFileURL.path
         let archiveRoot = request.destinationRoot.appendingPathComponent(Defaults.archiveFolderName)
+        let markerURL = request.destinationRoot.appendingPathComponent(Defaults.markerFileName)
+        var aborted = false
+
+        // The drive is present only while its marker exists. If it vanishes
+        // mid-run (unplugged/unmounted) we must stop — never recreate the tree
+        // on the internal disk at the now-empty mount point.
+        func destinationGone() -> Bool { !fm.fileExists(atPath: markerURL.path) }
 
         func record(_ type: SyncEventType, _ rel: String, _ sourceId: Int64?, _ message: String) {
             events.append(PendingEvent(timestamp: Date(), type: type, relativePath: rel, sourceId: sourceId, message: message))
@@ -186,19 +193,28 @@ actor SyncManager {
         /// Move one destination file into the archive (mirror mode). Never a
         /// hard delete; the recovery UI can restore it later.
         func archiveFile(_ destFile: URL, sourceId: Int64?) {
-            // Never archive things already inside the archive folder.
+            // Never archive DiskSync's own files (the marker or the archive itself).
             if destFile.path.hasPrefix(archiveRoot.standardizedFileURL.path) { return }
+            if destFile.lastPathComponent == Defaults.markerFileName { return }
             let relHome = relToDestRoot(destFile)
             var target = archiveRoot.appendingPathComponent(relHome)
             if fm.fileExists(atPath: target.path) {
-                let stamp = Int(Date().timeIntervalSince1970)
+                let suffix = UUID().uuidString.prefix(8)
                 target = target.deletingLastPathComponent()
-                    .appendingPathComponent(target.lastPathComponent + ".\(stamp)")
+                    .appendingPathComponent("\(target.lastPathComponent).\(suffix)")
             }
+            // Don't start a move onto a drive that's already gone.
+            if destinationGone() { aborted = true; return }
             let size = ((try? destFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize).map(Int64.init) ?? 0
             do {
                 try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try fm.moveItem(at: destFile, to: target)
+                // Only record it as archived once the moved file is really there.
+                guard fm.fileExists(atPath: target.path) else {
+                    errors += 1
+                    record(.error, relHome, sourceId, "Archive move did not complete")
+                    return
+                }
                 let archiveRel = relToDestRoot(target)
                 archived.append(ArchivedRecord(relativePath: relHome, archivePath: archiveRel,
                                                deletedAt: Date(), bytes: size, sourceId: sourceId))
@@ -227,6 +243,10 @@ actor SyncManager {
 
         /// Mirror reverse-scan: archive destination files whose source is gone.
         func reverseScan(_ source: ResolvedSource) {
+            // Only reverse-scan when the source root is actually readable — a
+            // transiently-missing source must never cause its whole mirror to be
+            // archived as "orphans".
+            guard fm.fileExists(atPath: source.url.path) else { return }
             let destBase = request.destinationRoot.appendingPathComponent(source.homeRelativePath)
             guard fm.fileExists(atPath: destBase.path) else { return }
             guard let enumerator = fm.enumerator(at: destBase,
@@ -234,7 +254,15 @@ actor SyncManager {
                                                  options: [], errorHandler: { _, _ in true }) else { return }
             var orphans: [URL] = []
             while let item = enumerator.nextObject() as? URL {
-                if (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
+                let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                // Never descend into / touch DiskSync's own files on the drive
+                // (matters when a source maps to the home root).
+                if item.path.hasPrefix(archiveRoot.standardizedFileURL.path) {
+                    if isDir { enumerator.skipDescendants() }
+                    continue
+                }
+                if item.lastPathComponent == Defaults.markerFileName { continue }
+                if isDir { continue }
                 let relWithin = relativePath(of: item, base: destBase)
                 if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
                                   excludes: request.excludes, sourceId: source.id) { continue }
@@ -283,6 +311,7 @@ actor SyncManager {
             processed += 1
             if processed % 50 == 0 {
                 progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: 0, currentPath: relHome))
+                if destinationGone() { aborted = true }
             }
         }
 
@@ -296,6 +325,7 @@ actor SyncManager {
                                                      return true
                                                  }) else { return }
             while let item = enumerator.nextObject() as? URL {
+                if aborted { break }
                 let rv = try? item.resourceValues(forKeys: keys)
                 let relWithin = relativePath(of: item, base: source.url)
                 if matchesExclude(name: item.lastPathComponent, relPath: relWithin,
@@ -312,9 +342,13 @@ actor SyncManager {
         log.log("Sync started (\(isFull ? "full reconcile" : "incremental"), \(request.sources.count) source(s))")
         progress(SyncProgress(filesProcessed: 0, filesTotalEstimate: 0, currentPath: ""))
 
+        // Bail before writing anything if the drive isn't actually there.
+        if destinationGone() { aborted = true }
+
         if isFull {
             // Full reconcile: walk every enabled source.
             for source in request.sources {
+                if aborted { break }
                 if source.isDirectory {
                     syncTree(source.url, source)
                 } else {
@@ -323,13 +357,17 @@ actor SyncManager {
                 }
             }
             // Mirror mode: archive destination files whose source no longer exists.
-            if request.mirrorEnabled {
-                for source in request.sources where source.isDirectory { reverseScan(source) }
+            if request.mirrorEnabled && !aborted {
+                for source in request.sources where source.isDirectory {
+                    if aborted { break }
+                    reverseScan(source)
+                }
             }
         } else {
             // Targeted: only the exact paths FSEvents reported — no full walk.
             var seen = Set<String>()
             for path in request.changedPaths ?? [] where seen.insert(path).inserted {
+                if aborted { break }
                 guard let source = request.sources.first(where: {
                     path == $0.url.path || path.hasPrefix($0.url.path + "/")
                 }) else { continue }
@@ -359,7 +397,7 @@ actor SyncManager {
 
         progress(SyncProgress(filesProcessed: processed, filesTotalEstimate: 0, currentPath: ""))
 
-        let status = errors > 0 ? "completed_with_errors" : "completed"
+        let status = aborted ? "aborted_drive_gone" : (errors > 0 ? "completed_with_errors" : "completed")
         let result = SyncRunResult(startedAt: started, finishedAt: Date(), status: status,
                                    filesCopied: copied + updated, bytesCopied: bytes,
                                    errorsCount: errors, conflicts: conflicts, skipped: skipped,
@@ -413,13 +451,19 @@ actor SyncManager {
 
         guard sizeDiffers || srcNewer || dstNewer else { return .skipped }
 
+        // Copy to a sibling temp file, then atomically swap it in — so a failed
+        // or interrupted write never destroys the existing good backup copy.
+        let tmp = dst.deletingLastPathComponent()
+            .appendingPathComponent(".disksync-tmp-\(UUID().uuidString)")
         do {
-            try fm.removeItem(at: dst)
-            try fm.copyItem(at: src, to: dst)
-            setModificationDate(srcDate, on: dst, fm: fm)
-            // Overwrote a strictly-newer destination ⇒ record a conflict.
-            return .updated(srcSize, conflict: dstNewer && !srcNewer)
+            try fm.copyItem(at: src, to: tmp)
+            setModificationDate(srcDate, on: tmp, fm: fm)
+            _ = try fm.replaceItemAt(dst, withItemAt: tmp)
+            // Conflict whenever the destination diverged and wasn't strictly
+            // older — newer mtime, or same mtime with a different size.
+            return .updated(srcSize, conflict: !srcNewer && (dstNewer || sizeDiffers))
         } catch {
+            try? fm.removeItem(at: tmp)
             return .error("Update failed: \(error.localizedDescription)")
         }
     }

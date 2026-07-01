@@ -42,6 +42,10 @@ final class AppState {
     private var destinationURL: URL?
     private var lastRunHadErrors = false
     private var lastErrorMessage = ""
+    private var isImporting = false
+    /// Resolved source URLs, cached so we resolve each bookmark (and start its
+    /// security scope) only once per config change — not on every sync.
+    private var sourceURLCache: [Int64: URL] = [:]
 
     // MARK: - Derived UI helpers
 
@@ -199,6 +203,16 @@ final class AppState {
     }
 
     func refreshDriveInfo() {
+        // If the known path is gone, the volume may have remounted elsewhere
+        // (e.g. "/Volumes/MetalMini 1"). Re-resolve the bookmark to find it.
+        let currentPath = destinationURL?.path ?? ""
+        if !FileManager.default.fileExists(atPath: currentPath),
+           let data = settings.destinationBookmark,
+           let resolved = ConfigStore.resolve(data) {
+            destinationURL = resolved
+            settings.destinationPath = resolved.path   // in-memory; display + next save
+        }
+
         guard let url = destinationURL else { drive = .disconnected; return }
         let wasConnected = drive.isConnected
         drive = VolumeMonitor.driveInfo(for: url, expectMarker: true)
@@ -216,7 +230,9 @@ final class AppState {
 
     /// Persist the current config onto the drive so it can be restored later.
     func writeManifest() {
-        guard let destinationURL, drive.isConnected else { return }
+        // Never overwrite the drive's remembered setup with an empty one (e.g.
+        // mid-bootstrap or right after removing the last source).
+        guard let destinationURL, drive.isConnected, !sources.isEmpty else { return }
         let manifest = DiskManifest(
             updatedAt: Date(),
             deviceName: Host.current().localizedName ?? "Mac",
@@ -230,8 +246,10 @@ final class AppState {
 
     /// Adopt the drive's remembered folders when this app has none configured.
     private func importFromDiskIfPossible(_ root: URL) {
-        guard sources.isEmpty, let manifest = DiskManifest.read(fromDestination: root),
+        guard !isImporting, sources.isEmpty,
+              let manifest = DiskManifest.read(fromDestination: root),
               !manifest.sources.isEmpty, let store = configStore else { return }
+        isImporting = true   // set synchronously to block a concurrent second import
         settings.mirrorEnabled = manifest.mirrorEnabled
         saveSettings()
         Task { [weak self] in
@@ -241,6 +259,7 @@ final class AppState {
             }
             guard let self else { return }
             self.sources.append(contentsOf: added)
+            self.isImporting = false
             self.restartWatching()
             if self.drive.isConnected { self.requestSync(full: true) }
         }
@@ -258,6 +277,7 @@ final class AppState {
         if let url = destinationURL, FileManager.default.fileExists(atPath: url.path) {
             panel.directoryURL = url
         }
+        NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         do {
@@ -294,6 +314,7 @@ final class AppState {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        NSApp.activate(ignoringOtherApps: true)   // agent app: bring the panel to front
         guard panel.runModal() == .OK else { return }
         addSources(urls: panel.urls)
     }
@@ -399,12 +420,21 @@ final class AppState {
             presentError("The archived file is not on the connected drive.")
             return
         }
+        // Copy to a temp first, then atomically swap in — never delete the live
+        // file at the restore target until the copy is confirmed.
+        let tmp = restoreTarget.deletingLastPathComponent()
+            .appendingPathComponent(".disksync-restore-\(UUID().uuidString)")
         do {
             try fm.createDirectory(at: restoreTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if fm.fileExists(atPath: restoreTarget.path) { try fm.removeItem(at: restoreTarget) }
-            try fm.copyItem(at: archiveSource, to: restoreTarget)
+            try fm.copyItem(at: archiveSource, to: tmp)
+            if fm.fileExists(atPath: restoreTarget.path) {
+                _ = try fm.replaceItemAt(restoreTarget, withItemAt: tmp)
+            } else {
+                try fm.moveItem(at: tmp, to: restoreTarget)
+            }
             try? fm.removeItem(at: archiveSource)          // moved back out of the archive
         } catch {
+            try? fm.removeItem(at: tmp)
             presentError("Restore failed: \(error.localizedDescription)")
             return
         }
@@ -459,6 +489,15 @@ final class AppState {
 
     // MARK: - Sync requests
 
+    /// Resolves a source to a URL once and caches it (starting its security
+    /// scope a single time), avoiding a resolve+startAccessing on every sync.
+    private func resolvedURL(for source: Source) -> URL {
+        if let cached = sourceURLCache[source.id] { return cached }
+        let url = source.bookmark.flatMap { ConfigStore.resolve($0) } ?? source.url
+        sourceURLCache[source.id] = url
+        return url
+    }
+
     private func requestSync(full: Bool, sourceIDs: Set<Int64>? = nil, changedPaths: [String]? = nil) {
         guard let destinationURL else { return }
         // Refuse to write unless the marker confirms the target.
@@ -476,12 +515,7 @@ final class AppState {
         }
 
         let resolved: [ResolvedSource] = candidates.compactMap { source in
-            let url: URL
-            if let data = source.bookmark, let resolvedURL = ConfigStore.resolve(data) {
-                url = resolvedURL
-            } else {
-                url = source.url
-            }
+            let url = resolvedURL(for: source)
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             let rel: String
             let p = url.standardizedFileURL.path
@@ -506,10 +540,20 @@ final class AppState {
     private func startWatching() { restartWatching() }
 
     private func restartWatching() {
-        writeManifest()   // sources changed → update the drive's memory
+        sourceURLCache.removeAll()   // sources changed → re-resolve lazily next sync
+        writeManifest()              // sources changed → update the drive's memory
         watcher?.stop()
-        let paths = sources.filter { $0.enabled && $0.isDirectory }.map(\.path)
-            + sources.filter { $0.enabled && !$0.isDirectory }.map(\.path)
+        // Watch directory sources directly; for single-file sources watch their
+        // parent folder (FSEvents is unreliable when pointed at a lone file).
+        var watchPaths = Set<String>()
+        for source in sources where source.enabled {
+            if source.isDirectory {
+                watchPaths.insert(source.path)
+            } else {
+                watchPaths.insert((source.path as NSString).deletingLastPathComponent)
+            }
+        }
+        let paths = Array(watchPaths)
         guard !paths.isEmpty else { watcher = nil; return }
         let watcher = FolderWatcher(paths: paths) { [weak self] changed in
             Task { @MainActor [weak self] in self?.handleFileChanges(changed) }

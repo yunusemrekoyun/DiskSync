@@ -397,22 +397,27 @@ actor Database {
 
         if !result.events.isEmpty {
             try exec("BEGIN TRANSACTION;")
-            let evStmt = try prepare("""
-            INSERT INTO sync_events (runId, timestamp, type, relativePath, sourceId, message)
-            VALUES (?, ?, ?, ?, ?, ?);
-            """)
-            for ev in result.events {
-                sqlite3_reset(evStmt)
-                bind(evStmt, 1, runId)
-                bind(evStmt, 2, ev.timestamp.timeIntervalSince1970)
-                bind(evStmt, 3, ev.type.rawValue)
-                bind(evStmt, 4, ev.relativePath)
-                bindOptionalInt(evStmt, 5, ev.sourceId)
-                bind(evStmt, 6, ev.message)
-                _ = sqlite3_step(evStmt)
+            do {
+                let evStmt = try prepare("""
+                INSERT INTO sync_events (runId, timestamp, type, relativePath, sourceId, message)
+                VALUES (?, ?, ?, ?, ?, ?);
+                """)
+                defer { sqlite3_finalize(evStmt) }
+                for ev in result.events {
+                    sqlite3_reset(evStmt)
+                    bind(evStmt, 1, runId)
+                    bind(evStmt, 2, ev.timestamp.timeIntervalSince1970)
+                    bind(evStmt, 3, ev.type.rawValue)
+                    bind(evStmt, 4, ev.relativePath)
+                    bindOptionalInt(evStmt, 5, ev.sourceId)
+                    bind(evStmt, 6, ev.message)
+                    _ = sqlite3_step(evStmt)
+                }
+                try exec("COMMIT;")
+            } catch {
+                try? exec("ROLLBACK;")   // never leave a dangling transaction on the shared handle
+                throw error
             }
-            sqlite3_finalize(evStmt)
-            try exec("COMMIT;")
         }
 
         try pruneEvents()
@@ -420,12 +425,12 @@ actor Database {
     }
 
     private func pruneEvents() throws {
-        // Keep the most recent `maxEvents` rows and anything < 30 days old.
+        // Keep the most recent `maxEvents` rows *and* anything < 30 days old.
         let cutoff = Date().addingTimeInterval(-30 * 24 * 3600).timeIntervalSince1970
         let stmt = try prepare("""
         DELETE FROM sync_events
         WHERE timestamp < ?
-           OR id NOT IN (SELECT id FROM sync_events ORDER BY id DESC LIMIT ?);
+          AND id NOT IN (SELECT id FROM sync_events ORDER BY id DESC LIMIT ?);
         """)
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, cutoff)
@@ -485,21 +490,26 @@ actor Database {
     func insertArchived(_ records: [ArchivedRecord]) throws {
         guard !records.isEmpty else { return }
         try exec("BEGIN TRANSACTION;")
-        let stmt = try prepare("""
-        INSERT INTO archived_items (relativePath, archivePath, deletedAt, bytes, sourceId)
-        VALUES (?, ?, ?, ?, ?);
-        """)
-        for r in records {
-            sqlite3_reset(stmt)
-            bind(stmt, 1, r.relativePath)
-            bind(stmt, 2, r.archivePath)
-            bind(stmt, 3, r.deletedAt.timeIntervalSince1970)
-            bind(stmt, 4, r.bytes)
-            bindOptionalInt(stmt, 5, r.sourceId)
-            _ = sqlite3_step(stmt)
+        do {
+            let stmt = try prepare("""
+            INSERT INTO archived_items (relativePath, archivePath, deletedAt, bytes, sourceId)
+            VALUES (?, ?, ?, ?, ?);
+            """)
+            defer { sqlite3_finalize(stmt) }
+            for r in records {
+                sqlite3_reset(stmt)
+                bind(stmt, 1, r.relativePath)
+                bind(stmt, 2, r.archivePath)
+                bind(stmt, 3, r.deletedAt.timeIntervalSince1970)
+                bind(stmt, 4, r.bytes)
+                bindOptionalInt(stmt, 5, r.sourceId)
+                _ = sqlite3_step(stmt)
+            }
+            try exec("COMMIT;")
+        } catch {
+            try? exec("ROLLBACK;")
+            throw error
         }
-        sqlite3_finalize(stmt)
-        try exec("COMMIT;")
     }
 
     func fetchArchived(limit: Int = 1000) throws -> [ArchivedItem] {

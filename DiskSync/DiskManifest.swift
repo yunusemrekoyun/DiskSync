@@ -41,6 +41,6 @@ nonisolated struct DiskManifest: Codable, Sendable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(self) else { return }
-        try? data.write(to: url)
+        try? data.write(to: url, options: .atomic)   // never leave a truncated marker
     }
 }
