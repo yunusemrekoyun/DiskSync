@@ -109,6 +109,14 @@ appears centered at the top of the screen.
 - Signed + **notarized** builds (Developer ID) for warning-free downloads.
 - **Homebrew Cask** for one-command install.
 
+## Author & Support
+
+Made with ♥ by **Yunus Emre Koyun** — [yunusemrekoyun.com](https://www.yunusemrekoyun.com)
+
+If ProfessorNotch is useful to you, please **⭐ star the repo** — it genuinely helps
+and is the easiest way to support the project. Found a bug or have an idea? Open an
+[issue](https://github.com/yunusemrekoyun/DiskSync/issues).
+
 ## License
 
 [MIT](LICENSE).
