@@ -15,6 +15,12 @@ nonisolated enum Format {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
+    /// Binary (1024-based) units for RAM, so 16 GiB reads as "16 GB" like
+    /// "About This Mac" rather than "17 GB" from decimal formatting.
+    static func memory(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .memory)
+    }
+
     static func shortDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateStyle = .none

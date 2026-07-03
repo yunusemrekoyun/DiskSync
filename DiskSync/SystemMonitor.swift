@@ -78,8 +78,12 @@ final class SystemMonitor {
         }
         guard result == KERN_SUCCESS else { return }
         let pageSize = Int64(sysconf(_SC_PAGESIZE))   // avoids the non-Sendable vm_page_size global
-        let used = Int64(stats.active_count) + Int64(stats.wire_count) + Int64(stats.compressor_page_count)
-        memoryUsed = used * pageSize
+        // Match Activity Monitor's "Memory Used": app memory (anonymous, minus
+        // purgeable) + wired + compressed — not raw active, which includes file
+        // cache and overstates usage.
+        let appMemory = Int64(stats.internal_page_count) - Int64(stats.purgeable_count)
+        let used = appMemory + Int64(stats.wire_count) + Int64(stats.compressor_page_count)
+        memoryUsed = max(0, used) * pageSize
     }
 
     // MARK: - Disk

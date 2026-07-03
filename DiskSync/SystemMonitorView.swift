@@ -16,7 +16,7 @@ struct SystemMonitorView: View {
             meter("cpu", "CPU", "\(Int(monitor.cpuUsage * 100))%",
                   fraction: monitor.cpuUsage, color: .blue)
             meter("memorychip", "Memory",
-                  "\(Format.bytes(monitor.memoryUsed)) / \(Format.bytes(monitor.memoryTotal))",
+                  "\(Format.memory(monitor.memoryUsed)) / \(Format.memory(monitor.memoryTotal))",
                   fraction: monitor.memoryFraction, color: .green)
             meter("internaldrive", "Disk",
                   "\(Format.bytes(monitor.diskFree)) free",
