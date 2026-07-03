@@ -43,6 +43,7 @@ struct HubView: View {
     let model: NotchViewModel
     @State private var battery = BatteryManager.shared
     @State private var prefs = Preferences.shared
+    @State private var hoveredTab: HubTab?
     @Environment(\.openSettings) private var openSettings
 
     /// Height of the physical notch band; tab icons sit within it (beside the
@@ -135,6 +136,7 @@ struct HubView: View {
             if model.tab != item { Haptics.select() }
             withAnimation(.easeInOut(duration: 0.18)) { model.tab = item }
         } label: {
+            let isHovered = hoveredTab == item && tab != item
             Group {
                 if item == .battery {
                     BatteryRing(level: battery.level,
@@ -143,17 +145,28 @@ struct HubView: View {
                 } else {
                     Image(systemName: item.symbol)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(tab == item ? .white : .secondary)
+                        .foregroundStyle(tab == item ? .white : (isHovered ? .primary : .secondary))
                 }
             }
             .frame(width: 34, height: 34)
             .background {
                 if tab == item { Circle().fill(.white.opacity(0.16)) }
+                else if isHovered { Circle().fill(.white.opacity(0.09)) }
             }
+            .scaleEffect(isHovered ? 1.12 : 1.0)
+            .animation(.easeOut(duration: 0.14), value: isHovered)
             .contentShape(Rectangle())   // whole frame is clickable, not just the glyph
         }
         .buttonStyle(.plain)
         .help(item.title)
+        .onHover { inside in
+            if inside {
+                if hoveredTab != item { Haptics.hover() }   // light tick when entering a tab
+                hoveredTab = item
+            } else if hoveredTab == item {
+                hoveredTab = nil
+            }
+        }
     }
 
     // MARK: - Content
