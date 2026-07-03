@@ -89,10 +89,10 @@ final class NotchController {
                 while !Task.isCancelled {
                     let prefs = Preferences.shared
                     if prefs.liveActivitiesEnabled, prefs.laNowPlaying {
-                        await MediaController.shared.refresh()
+                        await MediaController.shared.refreshPlayback()
                     }
                     self?.updateActivity()
-                    try? await Task.sleep(for: .seconds(5))
+                    try? await Task.sleep(for: .seconds(8))
                 }
             }
         }

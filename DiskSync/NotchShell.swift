@@ -246,7 +246,7 @@ struct Equalizer: View {
     let active: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !active)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 18.0, paused: !active)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 2.5) {
                 ForEach(0..<3, id: \.self) { i in

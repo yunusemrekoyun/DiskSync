@@ -80,17 +80,23 @@ final class MediaController {
     // MARK: - Polling
 
     func refresh() async {
+        await refreshPlayback()
+        await refreshVolume()
+    }
+
+    /// Lighter refresh for the background Now-Playing pill: playback state + art
+    /// only (skips the system-volume AppleScript that only the Control tab needs).
+    func refreshPlayback() async {
         let raw = await Self.runScript(Self.stateScript)
         automationDenied = Self.lastRunWasDenied
-        if let raw, raw != "none" {
-            parse(raw)
-        } else {
-            source = .none; title = ""; artist = ""; album = ""; isPlaying = false
-            position = 0; duration = 0; artworkURL = ""; artwork = nil; lastArtKey = ""
-            iconSource = .none; appIcon = nil
-        }
-        await refreshVolume()
+        if let raw, raw != "none" { parse(raw) } else { clearPlayback() }
         await refreshArtwork()
+    }
+
+    private func clearPlayback() {
+        source = .none; title = ""; artist = ""; album = ""; isPlaying = false
+        position = 0; duration = 0; artworkURL = ""; artwork = nil; lastArtKey = ""
+        iconSource = .none; appIcon = nil
     }
 
     /// Opens System Settings at Privacy → Automation so the user can grant

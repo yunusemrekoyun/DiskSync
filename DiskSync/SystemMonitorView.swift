@@ -14,6 +14,8 @@ struct SystemMonitorView: View {
 
     var body: some View {
         VStack(spacing: 12) {
+            timerSection
+            Divider().opacity(0.2)
             meter("cpu", "CPU", "\(Int(monitor.cpuUsage * 100))%",
                   fraction: monitor.cpuUsage, color: .blue)
             meter("memorychip", "Memory",
@@ -32,9 +34,6 @@ struct SystemMonitorView: View {
             }
             .font(.caption.weight(.medium))
             .padding(.top, 2)
-
-            Divider().opacity(0.2)
-            timerSection
 
             Spacer(minLength: 0)
         }
