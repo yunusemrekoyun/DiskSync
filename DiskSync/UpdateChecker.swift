@@ -48,7 +48,8 @@ final class UpdateChecker {
             if http.statusCode == 404 { state = .upToDate; return }   // no releases published yet
             guard http.statusCode == 200 else { state = .failed; return }
             let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-            let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+            var latest = release.tagName.trimmingCharacters(in: .whitespaces)
+            if latest.hasPrefix("v") || latest.hasPrefix("V") { latest.removeFirst() }
             if Self.isNewer(latest, than: currentVersion) {
                 state = .available(version: latest,
                                    url: URL(string: release.htmlURL) ?? Self.releasesPage)

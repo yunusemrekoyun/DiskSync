@@ -59,9 +59,27 @@ enum Haptics {
     }
 }
 
+/// A Max-level hover tick for interactive controls. Edge-triggered (fires once
+/// per genuine enter, not on every onHover event or layout reflow) and skipped
+/// for disabled controls so a greyed-out button never buzzes.
+private struct HapticHover: ViewModifier {
+    let enabled: Bool
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content.onHover { inside in
+            if inside {
+                if enabled, !hovering { Haptics.hover() }
+                hovering = true
+            } else {
+                hovering = false
+            }
+        }
+    }
+}
+
 extension View {
-    /// A Max-level hover tick for interactive controls (buttons, tiles, apps).
-    func hapticHover() -> some View {
-        onHover { if $0 { Haptics.hover() } }
+    func hapticHover(_ enabled: Bool = true) -> some View {
+        modifier(HapticHover(enabled: enabled))
     }
 }

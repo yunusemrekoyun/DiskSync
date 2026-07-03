@@ -2,9 +2,9 @@
 //  SettingsView.swift
 //  DiskSync
 //
-//  The Settings window, opened on demand from the popover. Organized into
-//  General / Folders / Excludes / Activity / About tabs. Everything the app
-//  does is configurable here and persists to SQLite.
+//  The Settings window, opened on demand from the notch. Organized into
+//  General / Backup / Folders / Excludes / Archive / Activity / About tabs.
+//  Everything the app does is configurable here and persists to SQLite.
 //
 
 import SwiftUI

@@ -218,7 +218,7 @@ struct HubView: View {
                     }
                     .buttonStyle(.glassProminent)
                     .disabled(!app.canSyncNow)
-                    .hapticHover()
+                    .hapticHover(app.canSyncNow)
                     .help(app.canSyncNow
                           ? "Sync the selected folders now."
                           : (app.sources.isEmpty

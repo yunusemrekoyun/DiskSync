@@ -244,7 +244,7 @@ struct ControlView: View {
         let enabled = (e == .wifi) ? net.wifiAvailable : net.bluetoothToggleable
         return HStack(spacing: 10) {
             PowerToggle(isOn: on, enabled: enabled) { Haptics.button(); setPower(e, $0) }
-                .hapticHover()
+                .hapticHover(enabled)
             Text(on ? "On" : "Off").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             Spacer(minLength: 4)
             Button { Haptics.button(); openToggleSettings(e) } label: {
@@ -455,6 +455,7 @@ struct PowerToggle: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
         .opacity(enabled ? 1 : 0.55)
     }
 }
