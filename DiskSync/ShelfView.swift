@@ -78,7 +78,7 @@ struct ShelfView: View {
             } else {
                 shelf.add(urls)
             }
-            Haptics.action()   // confirming tick on drop
+            Haptics.event()   // confirming tick on drop
             return true
         } isTargeted: { dropTargeted = $0 }
     }

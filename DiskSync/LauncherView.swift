@@ -19,11 +19,12 @@ struct LauncherView: View {
                     SectionLabel(title: "Shortcuts")
                     Spacer()
                     Button {
-                        store.addPinnedViaPanel()
+                        Haptics.button(); store.addPinnedViaPanel()
                     } label: {
                         Image(systemName: "plus.circle.fill").foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .hapticHover()
                     .help("Add a shortcut")
                 }
 
@@ -84,9 +85,10 @@ struct LauncherView: View {
                 .frame(width: 58)
         }
         .contentShape(Rectangle())
-        .onTapGesture { store.launch(app) }
+        .onTapGesture { Haptics.button(); store.launch(app) }
+        .hapticHover()
         .contextMenu {
-            Button("Open") { store.launch(app) }
+            Button("Open") { Haptics.button(); store.launch(app) }
             if removable {
                 Button("Remove", role: .destructive) { store.removePinned(app) }
             } else {

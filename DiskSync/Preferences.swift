@@ -23,7 +23,7 @@ final class Preferences {
     var showShelf: Bool      { didSet { store.set(showShelf, forKey: "pref.shelf") } }
     var showSystem: Bool     { didSet { store.set(showSystem, forKey: "pref.system") } }
 
-    var hapticsEnabled: Bool { didSet { store.set(hapticsEnabled, forKey: "pref.haptics") } }
+    var hapticLevel: HapticLevel { didSet { store.set(hapticLevel.rawValue, forKey: "pref.hapticLevel") } }
 
     /// When true, hovering the notch reopens the tab you last used; when false
     /// it always opens the first (Control) tab.
@@ -51,7 +51,14 @@ final class Preferences {
         showLauncher = flag("pref.launcher")
         showShelf = flag("pref.shelf")
         showSystem = flag("pref.system")
-        hapticsEnabled = flag("pref.haptics")
+        // Haptic level: use the new key if set, else migrate the old on/off
+        // toggle (on → Medium, off → Off).
+        if d.object(forKey: "pref.hapticLevel") != nil {
+            hapticLevel = HapticLevel(rawValue: d.integer(forKey: "pref.hapticLevel")) ?? .medium
+        } else {
+            let oldOn = d.object(forKey: "pref.haptics") == nil ? true : d.bool(forKey: "pref.haptics")
+            hapticLevel = oldOn ? .medium : .off
+        }
         openLastTab = flag("pref.openLastTab", default: false)
         clipboardEnabled = flag("pref.clipboard")
         // Off by default so a stock install is fully offline until the user

@@ -135,12 +135,13 @@ struct ControlView: View {
         .frame(width: 42, height: 42)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
-        .onTapGesture { if media.hasTrack { Haptics.select(); media.openSourceApp() } }
+        .onTapGesture { if media.hasTrack { Haptics.button(); media.openSourceApp() } }
+        .hapticHover()
         .help("Open in \(media.source.displayName)")
     }
 
     private func transport(_ symbol: String, size: CGFloat = 16, action: @escaping () async -> Void) -> some View {
-        Button { Task { await action() } } label: {
+        Button { Haptics.button(); Task { await action() } } label: {
             Image(systemName: symbol)
                 .font(.system(size: size))
                 .foregroundStyle(.white)
@@ -148,6 +149,7 @@ struct ControlView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hapticHover()
     }
 
     // MARK: - Sliders + output (right column)
@@ -177,7 +179,7 @@ struct ControlView: View {
     }
 
     private var outputChip: some View {
-        Button { audio.refresh(); panel = .audio } label: {
+        Button { Haptics.button(); audio.refresh(); panel = .audio } label: {
             HStack(spacing: 5) {
                 Image(systemName: "hifispeaker.and.appletv").font(.system(size: 11)).foregroundStyle(.secondary)
                 Text(currentOutputName).font(.system(size: 10, weight: .medium)).foregroundStyle(.white).lineLimit(1)
@@ -189,6 +191,7 @@ struct ControlView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hapticHover()
         .help("Output: \(currentOutputName)")
     }
 
@@ -218,7 +221,7 @@ struct ControlView: View {
             tile(matchedID: "bluetooth", icon: "bluetooth",
                  label: "Bluetooth", on: net.bluetoothOn) { toggleExpanded(.bluetooth) }
             tile(icon: appearance.isDark ? "moon.fill" : "sun.max.fill",
-                 label: "Appearance", on: appearance.isDark) { Haptics.select(); appearance.toggle() }
+                 label: "Appearance", on: appearance.isDark) { appearance.toggle() }
             tile(icon: "display", label: "Displays", on: false) {
                 displays.refresh(); panel = .displays
             }
@@ -240,15 +243,17 @@ struct ControlView: View {
         let on = tileOn(e)
         let enabled = (e == .wifi) ? net.wifiAvailable : net.bluetoothToggleable
         return HStack(spacing: 10) {
-            PowerToggle(isOn: on, enabled: enabled) { setPower(e, $0) }
+            PowerToggle(isOn: on, enabled: enabled) { Haptics.button(); setPower(e, $0) }
+                .hapticHover()
             Text(on ? "On" : "Off").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             Spacer(minLength: 4)
-            Button { openToggleSettings(e) } label: {
+            Button { Haptics.button(); openToggleSettings(e) } label: {
                 Image(systemName: "gearshape").font(.system(size: 14)).foregroundStyle(.white)
                     .frame(width: 30, height: 30)
                     .background(.white.opacity(0.14), in: Circle())
             }
             .buttonStyle(.plain)
+            .hapticHover()
             .help("\(tileLabel(e)) Settings")
         }
         .padding(.horizontal, 12)
@@ -257,7 +262,6 @@ struct ControlView: View {
     }
 
     private func toggleExpanded(_ e: Expanded) {
-        Haptics.select()
         expanded = (expanded == e) ? nil : e
     }
 
@@ -275,7 +279,7 @@ struct ControlView: View {
 
     private func tile(matchedID: String? = nil, icon: String, label: String, on: Bool,
                       action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button { Haptics.button(); action() } label: {
             VStack(spacing: 4) {
                 glyph(icon, size: 15)
                     .foregroundStyle(on ? .white : .secondary)
@@ -290,6 +294,7 @@ struct ControlView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hapticHover()
         .matched(matchedID, in: tileNS)
     }
 
@@ -310,10 +315,11 @@ struct ControlView: View {
 
     private func panelHeader(_ title: String) -> some View {
         HStack {
-            Button { panel = .none } label: {
+            Button { Haptics.button(); panel = .none } label: {
                 Image(systemName: "chevron.left").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .hapticHover()
             Spacer()
             Text(title).font(.headline)
             Spacer()
@@ -327,7 +333,7 @@ struct ControlView: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(audio.outputs) { device in
-                        Button { audio.select(device) } label: {
+                        Button { Haptics.button(); audio.select(device) } label: {
                             HStack(spacing: 10) {
                                 Image(systemName: audio.symbol(for: device)).frame(width: 22)
                                     .foregroundStyle(device.id == audio.currentID ? Color.accentColor : .secondary)

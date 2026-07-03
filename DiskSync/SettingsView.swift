@@ -60,7 +60,14 @@ private struct NotchSettings: View {
             }
 
             Section("Feedback") {
-                Toggle("Haptic feedback", isOn: Binding(get: { prefs.hapticsEnabled }, set: { prefs.hapticsEnabled = $0 }))
+                Picker("Haptics", selection: Binding(
+                    get: { prefs.hapticLevel }, set: { prefs.hapticLevel = $0 })) {
+                    ForEach(HapticLevel.allCases) { level in
+                        Text(level.label).tag(level)
+                    }
+                }
+                Text(prefs.hapticLevel.detail)
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Clipboard") {

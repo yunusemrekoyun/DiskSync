@@ -115,9 +115,9 @@ struct HubView: View {
 
     private var settingsMenu: some View {
         Menu {
-            Button("Settings…") { openSettings() }
+            Button("Settings…") { Haptics.button(); openSettings() }
             Divider()
-            Button("Quit ProfessorNotch") { NSApplication.shared.terminate(nil) }
+            Button("Quit ProfessorNotch") { Haptics.button(); NSApplication.shared.terminate(nil) }
         } label: {
             Image(systemName: "gearshape")
                 .font(.caption)
@@ -128,12 +128,13 @@ struct HubView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .hapticHover()
     }
 
     @ViewBuilder
     private func tabButton(_ item: HubTab) -> some View {
         Button {
-            if model.tab != item { Haptics.select() }
+            if model.tab != item { Haptics.tab() }
             withAnimation(.easeInOut(duration: 0.18)) { model.tab = item }
         } label: {
             let isHovered = hoveredTab == item && tab != item
@@ -161,7 +162,7 @@ struct HubView: View {
         .help(item.title)
         .onHover { inside in
             if inside {
-                if hoveredTab != item { Haptics.hover() }   // light tick when entering a tab
+                if hoveredTab != item { Haptics.tabHover() }   // light tick when entering a tab
                 hoveredTab = item
             } else if hoveredTab == item {
                 hoveredTab = nil
@@ -201,30 +202,33 @@ struct HubView: View {
                 if !app.destinationConfigured {
                     // First run: no destination yet — guide the user straight to it.
                     Button {
-                        app.pickDestination()
+                        Haptics.button(); app.pickDestination()
                     } label: {
                         Label("Set Up Backup…", systemImage: "externaldrive.badge.plus")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.glassProminent)
+                    .hapticHover()
                 } else {
                     Button {
-                        app.syncNow()
+                        Haptics.button(); app.syncNow()
                     } label: {
                         Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.glassProminent)
                     .disabled(!app.canSyncNow)
+                    .hapticHover()
                     .help(app.canSyncNow
                           ? "Sync the selected folders now."
                           : (app.sources.isEmpty
                              ? "Add folders in Settings to start backing up."
                              : "Connect the backup drive to sync."))
                     if app.sources.isEmpty {
-                        Button("Add folders…") { openSettings() }
+                        Button("Add folders…") { Haptics.button(); openSettings() }
                             .buttonStyle(.glass)
                             .font(.caption)
+                            .hapticHover()
                     }
                 }
             }

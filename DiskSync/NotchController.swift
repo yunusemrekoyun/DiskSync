@@ -57,7 +57,7 @@ final class NotchController {
         }
         // Replace any in-flight flash immediately and restart the dismiss timer.
         model.flash = NotchFlash(kind: kind, level: battery.level)
-        Haptics.action()   // tick when charger is (un)plugged
+        Haptics.event()   // tick when charger is (un)plugged
         flashClearItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.model.flash = nil }
         flashClearItem = work
@@ -170,7 +170,7 @@ final class NotchController {
             if command { ShelfStore.shared.airDrop(urls) } else { ShelfStore.shared.add(urls) }
             self.model.tab = .shelf
             self.expand()
-            Haptics.action()
+            Haptics.event()
         }
 
         let window = NSWindow(contentRect: frame, styleMask: [.borderless],
@@ -239,7 +239,7 @@ final class NotchController {
         model.flash = nil
         window?.ignoresMouseEvents = false   // become interactive immediately
         model.isExpanded = true              // SwiftUI runs the spring
-        Haptics.hover()                      // subtle tick on open
+        Haptics.notchOpen()                  // subtle tick on open
     }
 
     private func collapse() {
