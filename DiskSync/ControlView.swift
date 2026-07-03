@@ -35,6 +35,11 @@ struct ControlView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.snappy(duration: 0.22), value: panel)
+        // Force the normal arrow cursor over the whole tab (SwiftUI otherwise
+        // shows an I-beam over some of the hosted content).
+        .onHover { inside in
+            if inside { NSCursor.arrow.push() } else { NSCursor.pop() }
+        }
         .task {
             audio.refresh()
             while !Task.isCancelled {
@@ -203,7 +208,7 @@ struct ControlView: View {
         HStack(spacing: 8) {
             tile(matchedID: "wifi", icon: net.wifiOn ? "wifi" : "wifi.slash",
                  label: "Wi-Fi", on: net.wifiOn) { toggleExpanded(.wifi) }
-            tile(matchedID: "bluetooth", icon: "dot.radiowaves.right",
+            tile(matchedID: "bluetooth", icon: "bluetooth",
                  label: "Bluetooth", on: net.bluetoothOn) { toggleExpanded(.bluetooth) }
             tile(icon: appearance.isDark ? "moon.fill" : "sun.max.fill",
                  label: "Appearance", on: appearance.isDark) { Haptics.select(); appearance.toggle() }
@@ -230,6 +235,7 @@ struct ControlView: View {
         return HStack(spacing: 10) {
             Toggle("", isOn: Binding(get: { on }, set: { setPower(e, $0) }))
                 .toggleStyle(.switch).labelsHidden().disabled(!enabled)
+                .tint(.green)   // green when on, gray when off
             Text(on ? "On" : "Off").font(.caption.weight(.medium)).foregroundStyle(.secondary)
             Spacer(minLength: 4)
             Button { openToggleSettings(e) } label: {
@@ -251,7 +257,7 @@ struct ControlView: View {
     }
 
     private func tileIcon(_ e: Expanded) -> String {
-        e == .wifi ? (net.wifiOn ? "wifi" : "wifi.slash") : "dot.radiowaves.right"
+        e == .wifi ? (net.wifiOn ? "wifi" : "wifi.slash") : "bluetooth"
     }
     private func tileLabel(_ e: Expanded) -> String { e == .wifi ? "Wi-Fi" : "Bluetooth" }
     private func tileOn(_ e: Expanded) -> Bool { e == .wifi ? net.wifiOn : net.bluetoothOn }
@@ -266,8 +272,7 @@ struct ControlView: View {
                       action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .medium))
+                glyph(icon, size: 15)
                     .foregroundStyle(on ? .white : .secondary)
                     .frame(width: 32, height: 32)
                     .background {
@@ -281,6 +286,19 @@ struct ControlView: View {
         }
         .buttonStyle(.plain)
         .matched(matchedID, in: tileNS)
+    }
+
+    /// SF Symbol for most glyphs, but the real Bluetooth mark for "bluetooth"
+    /// (SF Symbols ships no Bluetooth glyph, so we draw it).
+    @ViewBuilder
+    private func glyph(_ name: String, size: CGFloat) -> some View {
+        if name == "bluetooth" {
+            BluetoothLogo()
+                .stroke(style: StrokeStyle(lineWidth: max(1.4, size * 0.13), lineCap: .round, lineJoin: .round))
+                .frame(width: size * 0.62, height: size * 1.05)
+        } else {
+            Image(systemName: name).font(.system(size: size, weight: .medium))
+        }
     }
 
     // MARK: - Detail panels (output + displays)
@@ -399,5 +417,24 @@ private extension View {
     @ViewBuilder
     func matched(_ id: String?, in ns: Namespace.ID) -> some View {
         if let id { matchedGeometryEffect(id: id, in: ns) } else { self }
+    }
+}
+
+/// The Bluetooth "ᛒ" bind-rune mark, drawn as a single stroked path (SF Symbols
+/// has no Bluetooth glyph). A vertical spine with two right-hand knees and two
+/// crossing diagonals to the left.
+struct BluetoothLogo: Shape {
+    func path(in rect: CGRect) -> Path {
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
+        }
+        var path = Path()
+        path.move(to: p(0.34, 0.26))
+        path.addLine(to: p(0.66, 0.74))
+        path.addLine(to: p(0.50, 0.90))
+        path.addLine(to: p(0.50, 0.10))
+        path.addLine(to: p(0.66, 0.26))
+        path.addLine(to: p(0.34, 0.74))
+        return path
     }
 }
