@@ -16,9 +16,10 @@ Six tabs live in the notch (all optional — toggle any off in Settings):
 - **💾 Sync** — one-way, additive folder mirroring to an external drive. Never deletes
   (optional *Mirror mode* moves removed files to a recoverable on-drive archive). Live
   status, free-space bar, and an **iCloud Drive activity** line.
-- **🎵 Now Playing** — Apple Music / Spotify controls with real album art; click the
-  artwork to jump to the app; a Control-Center-style volume bar and an **output-device
-  switcher** (CoreAudio).
+- **🎛 Control** — a mini Control-Center: Apple Music / Spotify controls with real album
+  art (click the artwork to jump to the app), vertical **volume + brightness** sliders,
+  an **output-device switcher** (CoreAudio), and four quick toggles — **Wi-Fi**,
+  **Bluetooth**, **Dark Mode**, and a **Displays** panel (per-screen brightness, resolution).
 - **🔋 Battery** — a live charge ring (color-coded), health, cycle count, time
   remaining, and a **charging animation** when you plug in.
 - **🚀 Apps** — pinned shortcuts + **frequent** and **recent** apps (one-click launch).

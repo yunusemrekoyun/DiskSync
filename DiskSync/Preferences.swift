@@ -25,6 +25,10 @@ final class Preferences {
 
     var hapticsEnabled: Bool { didSet { store.set(hapticsEnabled, forKey: "pref.haptics") } }
 
+    /// When true, hovering the notch reopens the tab you last used; when false
+    /// it always opens the first (Control) tab.
+    var openLastTab: Bool { didSet { store.set(openLastTab, forKey: "pref.openLastTab") } }
+
     var clipboardEnabled: Bool {
         didSet {
             store.set(clipboardEnabled, forKey: "pref.clipboard")
@@ -48,6 +52,7 @@ final class Preferences {
         showShelf = flag("pref.shelf")
         showSystem = flag("pref.system")
         hapticsEnabled = flag("pref.haptics")
+        openLastTab = flag("pref.openLastTab", default: false)
         clipboardEnabled = flag("pref.clipboard")
         // Off by default so a stock install is fully offline until the user
         // explicitly opts in (honors the "100% local & offline" promise).

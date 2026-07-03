@@ -3,10 +3,10 @@
 //  ProfessorNotch
 //
 //  The SwiftUI content hosted inside the notch HUD panel. A tab bar that splits
-//  around the physical notch, plus the six hub modules: Now Playing (media +
-//  audio output), Sync (the offline backup engine), Battery, Apps (launcher),
-//  Shelf + Clipboard, and System monitor. Any module except Sync can be hidden
-//  from Settings; hidden tabs are filtered out of the bar.
+//  around the physical notch, plus the six hub modules: Control (media, volume,
+//  brightness, and quick toggles), Sync (the offline backup engine), Battery,
+//  Apps (launcher), Shelf + Clipboard, and System monitor. Any module except
+//  Sync can be hidden from Settings; hidden tabs are filtered out of the bar.
 //
 
 import SwiftUI
@@ -17,7 +17,7 @@ enum HubTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .nowPlaying: return "play.circle.fill"
+        case .nowPlaying: return "switch.2"
         case .sync:       return "externaldrive.fill"
         case .battery:    return "battery.100"      // battery uses a custom ring icon
         case .apps:       return "square.grid.2x2.fill"
@@ -28,7 +28,7 @@ enum HubTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .nowPlaying: return "Now Playing"
+        case .nowPlaying: return "Control"
         case .sync:       return "Sync"
         case .battery:    return "Battery"
         case .apps:       return "Apps"
@@ -161,7 +161,7 @@ struct HubView: View {
     private var content: some View {
         switch tab {
         case .nowPlaying:
-            NowPlayingView()
+            ControlView()
         case .battery:
             BatteryView()
         case .sync:

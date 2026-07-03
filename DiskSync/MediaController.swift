@@ -5,7 +5,7 @@
 //  Reads and controls the currently-playing track in Apple Music / Spotify via
 //  AppleScript, and exposes the system output volume. Fully local except for an
 //  optional Spotify cover-art download (off by default; opt-in in Settings).
-//  Polled only while the notch is open (see NowPlayingView) to save resources.
+//  Polled only while the notch is open (see ControlView) to save resources.
 //
 
 import Foundation

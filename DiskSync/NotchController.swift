@@ -214,8 +214,11 @@ final class NotchController {
             if hotRect.contains(location) { cancelHide() } else { scheduleHide() }
         } else if notchRect.contains(location) {
             cancelHide()
-            // A plain hover opens Media (or Sync if the Media tab is hidden).
-            model.tab = Preferences.shared.showNowPlaying ? .nowPlaying : .sync
+            // Unless the user prefers reopening their last tab, a plain hover
+            // opens the first (Control) tab — or Sync if Control is hidden.
+            if !Preferences.shared.openLastTab {
+                model.tab = Preferences.shared.showNowPlaying ? .nowPlaying : .sync
+            }
             expand()
         }
     }
