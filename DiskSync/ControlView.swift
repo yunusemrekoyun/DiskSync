@@ -2,11 +2,12 @@
 //  ControlView.swift
 //  ProfessorNotch
 //
-//  The Control tab — a compact mini Control-Center in the notch that fits the
-//  same HUD height as every other tab. Top: a now-playing strip (no scrubber).
-//  Middle: brightness + volume sliders with a visible output-device button.
-//  Bottom: four quick-toggle tiles (Wi-Fi, Bluetooth, Dark Mode, Displays).
-//  Tapping the output button or a toggle slides in a detail panel.
+//  The Control tab — a compact mini Control-Center in the notch. Top: a
+//  now-playing strip (no scrubber). Middle: brightness + volume sliders with a
+//  visible output-device button. Bottom: four quick-toggle tiles. Wi-Fi and
+//  Bluetooth expand a simple inline on/off + Settings row right below the tiles;
+//  the output picker and Displays open a sliding detail panel. The whole thing
+//  scrolls (top-anchored) so it never clips at the standard HUD height.
 //
 
 import SwiftUI
@@ -19,20 +20,20 @@ struct ControlView: View {
     @State private var appearance = AppearanceManager.shared
     @State private var displays = DisplaysManager.shared
 
-    private enum Panel: Equatable { case none, audio, wifi, bluetooth, displays }
+    private enum Panel: Equatable { case none, audio, displays }
+    private enum Expanded: Equatable { case wifi, bluetooth }
     @State private var panel: Panel = .none
+    @State private var expanded: Expanded?
 
     var body: some View {
-        ZStack {
+        Group {
             switch panel {
-            case .none:      home.transition(.opacity)
-            case .audio:     audioPanel.transition(move)
-            case .wifi:      wifiPanel.transition(move)
-            case .bluetooth: bluetoothPanel.transition(move)
-            case .displays:  displaysPanel.transition(move)
+            case .none:     home
+            case .audio:    audioPanel.padding(12)
+            case .displays: displaysPanel.padding(12)
             }
         }
-        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.snappy(duration: 0.22), value: panel)
         .task {
             audio.refresh()
@@ -43,8 +44,6 @@ struct ControlView: View {
         }
     }
 
-    private var move: AnyTransition { .move(edge: .trailing).combined(with: .opacity) }
-
     private func refreshSystem() {
         brightness.refresh(); net.refresh(); appearance.refresh(); audio.refresh()
         if panel == .displays { displays.refresh() }
@@ -53,12 +52,19 @@ struct ControlView: View {
     // MARK: - Home
 
     private var home: some View {
-        VStack(spacing: 9) {
-            musicStrip
-            slidersRow
-            Spacer(minLength: 2)
-            togglesRow
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 10) {
+                musicStrip
+                slidersRow
+                togglesRow
+                if let expanded {
+                    inlineToggle(expanded)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .padding(12)
         }
+        .animation(.snappy(duration: 0.22), value: expanded)
     }
 
     // MARK: - Now playing (top strip)
@@ -176,17 +182,22 @@ struct ControlView: View {
     private var togglesRow: some View {
         HStack(spacing: 8) {
             tile(icon: net.wifiOn ? "wifi" : "wifi.slash", label: "Wi-Fi",
-                 on: net.wifiOn) { panel = .wifi }
+                 on: net.wifiOn, active: expanded == .wifi) { toggleExpanded(.wifi) }
             tile(icon: "dot.radiowaves.right", label: "Bluetooth",
-                 on: net.bluetoothOn) { panel = .bluetooth }
+                 on: net.bluetoothOn, active: expanded == .bluetooth) { toggleExpanded(.bluetooth) }
             tile(icon: appearance.isDark ? "moon.fill" : "sun.max.fill", label: "Appearance",
-                 on: appearance.isDark) { Haptics.select(); appearance.toggle() }
+                 on: appearance.isDark, active: false) { Haptics.select(); appearance.toggle() }
             tile(icon: "display", label: "Displays",
-                 on: false) { displays.refresh(); panel = .displays }
+                 on: false, active: false) { displays.refresh(); panel = .displays }
         }
     }
 
-    private func tile(icon: String, label: String, on: Bool, action: @escaping () -> Void) -> some View {
+    private func toggleExpanded(_ e: Expanded) {
+        Haptics.select()
+        expanded = (expanded == e) ? nil : e
+    }
+
+    private func tile(icon: String, label: String, on: Bool, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
@@ -200,13 +211,45 @@ struct ControlView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(active ? AnyShapeStyle(.white.opacity(0.12)) : AnyShapeStyle(.white.opacity(0.05)),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Detail panels
+    // MARK: - Inline Wi-Fi / Bluetooth controls
+
+    @ViewBuilder
+    private func inlineToggle(_ e: Expanded) -> some View {
+        switch e {
+        case .wifi:
+            inlineRow(title: "Wi-Fi", isOn: net.wifiOn, enabled: net.wifiAvailable,
+                      set: { net.setWiFi($0) }, openSettings: { net.openWiFiSettings() })
+        case .bluetooth:
+            inlineRow(title: "Bluetooth", isOn: net.bluetoothOn, enabled: net.bluetoothToggleable,
+                      set: { net.setBluetooth($0) }, openSettings: { net.openBluetoothSettings() })
+        }
+    }
+
+    private func inlineRow(title: String, isOn: Bool, enabled: Bool,
+                           set: @escaping (Bool) -> Void, openSettings: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            Toggle(title, isOn: Binding(get: { isOn }, set: set))
+                .toggleStyle(.switch)
+                .disabled(!enabled)
+                .font(.callout)
+            Spacer(minLength: 8)
+            Button { openSettings() } label: {
+                Label("Settings", systemImage: "gearshape").font(.caption)
+            }
+            .buttonStyle(.glass)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    // MARK: - Detail panels (output + displays)
 
     private func panelHeader(_ title: String) -> some View {
         HStack {
@@ -247,37 +290,6 @@ struct ControlView: View {
                 }
             }
             .frame(maxHeight: .infinity)
-        }
-    }
-
-    private var wifiPanel: some View {
-        VStack(spacing: 12) {
-            panelHeader("Wi-Fi")
-            Toggle("Wi-Fi", isOn: Binding(get: { net.wifiOn }, set: { net.setWiFi($0) }))
-                .toggleStyle(.switch)
-                .disabled(!net.wifiAvailable)
-            Button { net.openWiFiSettings() } label: {
-                Label("Wi-Fi Settings…", systemImage: "gearshape").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.glass)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var bluetoothPanel: some View {
-        VStack(spacing: 12) {
-            panelHeader("Bluetooth")
-            Toggle("Bluetooth", isOn: Binding(get: { net.bluetoothOn }, set: { net.setBluetooth($0) }))
-                .toggleStyle(.switch)
-                .disabled(!net.bluetoothToggleable)
-            if !net.bluetoothToggleable {
-                Text("Toggle unavailable on this Mac.").font(.caption2).foregroundStyle(.secondary)
-            }
-            Button { net.openBluetoothSettings() } label: {
-                Label("Bluetooth Settings…", systemImage: "gearshape").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.glass)
-            Spacer(minLength: 0)
         }
     }
 
