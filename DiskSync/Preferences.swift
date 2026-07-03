@@ -32,7 +32,7 @@ final class Preferences {
     var clipboardEnabled: Bool {
         didSet {
             store.set(clipboardEnabled, forKey: "pref.clipboard")
-            if !clipboardEnabled { ClipboardManager.shared.clear() }
+            ClipboardManager.shared.setEnabled(clipboardEnabled)
         }
     }
 

@@ -23,15 +23,15 @@ final class VolumeMonitor {
         let ws = NSWorkspace.shared.notificationCenter
         observers.append(ws.addObserver(forName: NSWorkspace.didMountNotification,
                                         object: nil, queue: .main) { [weak self] _ in
-            self?.onVolumeChange?()
+            MainActor.assumeIsolated { self?.onVolumeChange?() }
         })
         observers.append(ws.addObserver(forName: NSWorkspace.didUnmountNotification,
                                         object: nil, queue: .main) { [weak self] _ in
-            self?.onVolumeChange?()
+            MainActor.assumeIsolated { self?.onVolumeChange?() }
         })
         observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification,
                                         object: nil, queue: .main) { [weak self] _ in
-            self?.onWake?()
+            MainActor.assumeIsolated { self?.onWake?() }
         })
     }
 

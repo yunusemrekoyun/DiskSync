@@ -153,6 +153,7 @@ struct HubView: View {
             .contentShape(Rectangle())   // whole frame is clickable, not just the glyph
         }
         .buttonStyle(.plain)
+        .help(item.title)
     }
 
     // MARK: - Content

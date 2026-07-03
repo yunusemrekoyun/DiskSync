@@ -62,8 +62,9 @@ ProfessorNotch is **non-sandboxed** (a power-user utility) and asks only for wha
 - **Full Disk Access** — to back up protected folders (Documents/Downloads/…) and to
   read iCloud sync status. *System Settings → Privacy & Security → Full Disk Access → +
   → ProfessorNotch.*
-- **Automation** — to read/control Music & Spotify for the Now Playing tab (prompted on
+- **Automation** — to read/control Music & Spotify for the Control tab (prompted on
   first use). *System Settings → Privacy & Security → Automation.*
+- **Bluetooth** — to show/toggle Bluetooth from the Control tab (prompted on first use).
 
 No network entitlement is required; the app works fully offline.
 

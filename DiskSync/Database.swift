@@ -98,7 +98,7 @@ actor Database {
     private func bind(_ stmt: OpaquePointer, _ idx: Int32, _ data: Data?) {
         if let data {
             data.withUnsafeBytes { raw in
-                sqlite3_bind_blob(stmt, idx, raw.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
+                _ = sqlite3_bind_blob(stmt, idx, raw.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
             }
         } else {
             sqlite3_bind_null(stmt, idx)

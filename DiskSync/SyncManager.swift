@@ -293,14 +293,15 @@ actor SyncManager {
             let dest = request.destinationRoot.appendingPathComponent(relHome)
 
             if isLink {
-                copySymlink(from: url, to: dest, fm: fm) { type, msg in
+                copySymlink(from: url, to: dest, fm: fm, markerPath: markerURL.path) { type, msg in
                     if type == .error { errors += 1 } else if type == .copied { copied += 1 }
                     record(type, relHome, source.id, msg)
                 }
             } else if isDir {
                 try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
             } else {
-                switch copyFileIfNeeded(from: url, to: dest, srcValues: rv, fm: fm, log: log) {
+                switch copyFileIfNeeded(from: url, to: dest, srcValues: rv, fm: fm, log: log,
+                                        markerPath: markerURL.path) {
                 case .copied(let size):
                     copied += 1; bytes += size
                     record(.copied, relHome, source.id, "Copied new file")
@@ -432,10 +433,14 @@ actor SyncManager {
     /// Compare-and-copy a single file. Newer/missing/size-differs ⇒ copy.
     private nonisolated static func copyFileIfNeeded(from src: URL, to dst: URL,
                                          srcValues: URLResourceValues?,
-                                         fm: FileManager, log: AppLog) -> CopyOutcome {
+                                         fm: FileManager, log: AppLog, markerPath: String) -> CopyOutcome {
         let epsilon: TimeInterval = 1  // exFAT has ~2s mtime resolution
         let srcSize = Int64(srcValues?.fileSize ?? 0)
         let srcDate = srcValues?.contentModificationDate ?? .distantPast
+
+        // Final gate right before creating directories: never recreate the tree
+        // on the internal disk if the drive vanished since copyOne's check.
+        guard fm.fileExists(atPath: markerPath) else { return .skipped }
 
         do {
             try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -489,11 +494,14 @@ actor SyncManager {
 
     /// Recreate a symlink at the destination (never follow it).
     private nonisolated static func copySymlink(from src: URL, to dst: URL, fm: FileManager,
+                                    markerPath: String,
                                     record: (SyncEventType, String) -> Void) {
         guard let target = try? fm.destinationOfSymbolicLink(atPath: src.path) else {
             record(.error, "Could not read symlink")
             return
         }
+        // Don't recreate the tree on the internal disk if the drive just vanished.
+        guard fm.fileExists(atPath: markerPath) else { return }
         // If an identical link already exists, leave it.
         if let existing = try? fm.destinationOfSymbolicLink(atPath: dst.path), existing == target {
             return

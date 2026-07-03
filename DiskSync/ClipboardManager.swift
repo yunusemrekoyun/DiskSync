@@ -29,9 +29,23 @@ final class ClipboardManager {
     private var lastChangeCount = NSPasteboard.general.changeCount
     private var timer: Timer?
 
-    private init() { start() }
+    private init() {
+        if Preferences.shared.clipboardEnabled { start() }
+    }
+
+    /// Start/stop the polling timer as the preference changes, so a disabled
+    /// clipboard history doesn't keep a 1s wakeup running (App Nap friendly).
+    func setEnabled(_ on: Bool) {
+        if on {
+            if timer == nil { start() }
+        } else {
+            timer?.invalidate(); timer = nil
+            clear()
+        }
+    }
 
     private func start() {
+        guard timer == nil else { return }
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
