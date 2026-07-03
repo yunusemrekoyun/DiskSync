@@ -27,8 +27,11 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>ProfessorNotch — 100% local, offline folder mirroring &amp; notch hub.</string>
-	<!-- Needed to read/control Music & Spotify for the Now Playing panel. -->
+	<!-- Needed to read/control Music & Spotify for the Control panel. -->
 	<key>NSAppleEventsUsageDescription</key>
 	<string>ProfessorNotch controls Music and Spotify to show and manage what's currently playing.</string>
+	<!-- Needed to read/toggle Bluetooth power from the Control panel. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>ProfessorNotch shows and toggles Bluetooth power from the notch Control panel.</string>
 </dict>
 </plist>
