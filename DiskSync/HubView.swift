@@ -44,6 +44,7 @@ struct HubView: View {
     @State private var battery = BatteryManager.shared
     @State private var prefs = Preferences.shared
     @State private var hoveredTab: HubTab?
+    @State private var timerManager = TimerManager.shared
     @State private var cursorPushed = false
     @Environment(\.openSettings) private var openSettings
 
@@ -115,13 +116,35 @@ struct HubView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 HStack {
+                    if tab == .nowPlaying { timerBarButton }
                     Spacer()
                     settingsMenu
                 }
             }
+            .frame(height: 20)   // constant height so tabs don't shift
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
+    }
+
+    /// Timer launcher shown at the top-left of the Control tab (opens the timer
+    /// panel there); shows the countdown while running.
+    private var timerBarButton: some View {
+        Button { Haptics.button(); model.requestTimer = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "timer").font(.system(size: 11, weight: .semibold))
+                if timerManager.isRunning {
+                    Text(timerManager.displayString)
+                        .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                }
+            }
+            .foregroundStyle(timerManager.isRunning ? Color.green : .secondary)
+            .frame(height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hapticHover()
+        .help("Timer")
     }
 
     private var settingsMenu: some View {
@@ -187,7 +210,7 @@ struct HubView: View {
     private var content: some View {
         switch tab {
         case .nowPlaying:
-            ControlView()
+            ControlView(model: model)
         case .battery:
             BatteryView()
         case .sync:

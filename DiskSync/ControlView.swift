@@ -12,6 +12,7 @@
 import SwiftUI
 
 struct ControlView: View {
+    let model: NotchViewModel
     @State private var media = MediaController.shared
     @State private var audio = AudioManager.shared
     @State private var brightness = BrightnessManager.shared
@@ -37,6 +38,9 @@ struct ControlView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.snappy(duration: 0.22), value: panel)
+        .onChange(of: model.requestTimer) { _, wants in
+            if wants { panel = .timer; model.requestTimer = false }
+        }
         .task {
             audio.refresh()
             while !Task.isCancelled {
@@ -55,11 +59,7 @@ struct ControlView: View {
     // MARK: - Home
 
     private var home: some View {
-        VStack(spacing: 8) {
-            HStack {
-                timerChip
-                Spacer(minLength: 0)
-            }
+        VStack(spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
                 musicCard
                 rightColumn.frame(width: 118)
@@ -67,29 +67,7 @@ struct ControlView: View {
             .frame(maxHeight: .infinity)
             togglesRow
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
-    /// Top-left timer button; shows the countdown when running. Opens a panel to
-    /// pick a duration (like the output-device picker).
-    private var timerChip: some View {
-        Button { Haptics.button(); panel = .timer } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "timer").font(.system(size: 12, weight: .semibold))
-                if timerManager.isRunning {
-                    Text(timerManager.displayString)
-                        .font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                }
-            }
-            .foregroundStyle(timerManager.isRunning ? Color.green : .secondary)
-            .padding(.horizontal, 9).frame(height: 22)
-            .background(.white.opacity(0.08), in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .hapticHover()
-        .help("Timer")
+        .padding(12)
     }
 
     // MARK: - Now playing (left card)

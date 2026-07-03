@@ -48,6 +48,8 @@ final class NotchViewModel {
     var flash: NotchFlash?
     /// A persistent live activity (now playing / running timer) shown collapsed.
     var activity: LiveActivityKind?
+    /// Set by the Control-tab timer button to open the timer panel.
+    var requestTimer = false
 }
 
 struct NotchShell: View {
