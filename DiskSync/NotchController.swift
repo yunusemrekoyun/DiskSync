@@ -31,7 +31,7 @@ final class NotchController {
     private var hotRect: NSRect = .zero
 
     private let panelWidth: CGFloat = 480
-    private let panelHeight: CGFloat = 250
+    private let panelHeight: CGFloat = 300
 
     init(app: AppState) {
         self.appState = app

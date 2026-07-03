@@ -53,9 +53,9 @@ struct ControlView: View {
 
     private var home: some View {
         VStack(spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(spacing: 10) {
                 nowPlayingCard
-                rightControls.frame(width: 208)
+                controlsCard.frame(width: 214)
             }
             .frame(maxHeight: .infinity)
             togglesRow
@@ -70,23 +70,23 @@ struct ControlView: View {
                 cardEmpty(icon: "lock.shield", title: "Allow media control",
                           action: ("Open Settings", { media.openAutomationSettings() }))
             } else if media.hasTrack {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(spacing: 14) {
                     HStack(spacing: 10) {
                         artwork
                         VStack(alignment: .leading, spacing: 2) {
                             Text(media.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                             Text(media.artist.isEmpty ? media.source.displayName : media.artist)
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                         }
+                        Spacer(minLength: 0)
                     }
-                    HStack(spacing: 26) {
+                    HStack(spacing: 28) {
                         transport("backward.fill") { await media.previous() }
-                        transport(media.isPlaying ? "pause.fill" : "play.fill", size: 22) { await media.playPause() }
+                        transport(media.isPlaying ? "pause.fill" : "play.fill", size: 24) { await media.playPause() }
                         transport("forward.fill") { await media.next() }
                     }
-                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 cardEmpty(icon: "music.note", title: "Nothing playing", action: nil)
             }
@@ -140,15 +140,27 @@ struct ControlView: View {
 
     // MARK: - Sliders + output (right column)
 
-    private var rightControls: some View {
-        VStack(spacing: 8) {
+    private var controlsCard: some View {
+        VStack(spacing: 12) {
             if brightness.isAvailable {
-                CCSlider(value: brightness.level ?? 0, icon: "sun.max.fill") { brightness.set($0) }
+                labeledSlider(icon: "sun.max.fill", title: "Brightness",
+                              value: brightness.level ?? 0) { brightness.set($0) }
             }
-            CCSlider(value: media.volume, icon: volumeIcon) { media.setVolume($0) }
+            labeledSlider(icon: volumeIcon, title: "Volume",
+                          value: media.volume) { media.setVolume($0) }
             outputChip
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func labeledSlider(icon: String, title: String, value: Double,
+                               onChange: @escaping (Double) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            CCSlider(value: value, icon: icon, onChange: onChange)
+        }
     }
 
     private var volumeIcon: String {
