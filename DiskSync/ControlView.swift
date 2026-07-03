@@ -293,7 +293,7 @@ struct ControlView: View {
         if name == "bluetooth" {
             BluetoothLogo()
                 .stroke(style: StrokeStyle(lineWidth: max(1.4, size * 0.13), lineCap: .round, lineJoin: .round))
-                .frame(width: size * 0.62, height: size * 1.05)
+                .frame(width: size, height: size * 1.15)
         } else {
             Image(systemName: name).font(.system(size: size, weight: .medium))
         }
@@ -451,20 +451,21 @@ struct PowerToggle: View {
 /// crossing diagonals to the left.
 struct BluetoothLogo: Shape {
     func path(in rect: CGRect) -> Path {
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
+        // Draw at the mark's natural width:height (~0.56), centered in `rect`,
+        // so the diagonals keep their angle regardless of the frame's aspect.
+        let h = rect.height
+        let w = h * 0.56
+        let x0 = rect.midX - w / 2
+        func p(_ nx: CGFloat, _ ny: CGFloat) -> CGPoint {
+            CGPoint(x: x0 + nx * w, y: rect.minY + ny * h)
         }
-        let top = p(0.5, 0.06), bottom = p(0.5, 0.94), center = p(0.5, 0.5)
+        let top = p(0.5, 0.02), bottom = p(0.5, 0.98), center = p(0.5, 0.5)
         var path = Path()
-        // Vertical spine.
-        path.move(to: top); path.addLine(to: bottom)
-        // Upper-right triangle: top tip → upper knee → center.
-        path.move(to: top); path.addLine(to: p(0.80, 0.28)); path.addLine(to: center)
-        // Lower-right triangle: center → lower knee → bottom tip.
-        path.move(to: center); path.addLine(to: p(0.80, 0.72)); path.addLine(to: bottom)
-        // Left diagonals crossing to the center.
-        path.move(to: p(0.20, 0.30)); path.addLine(to: center)
-        path.move(to: p(0.20, 0.70)); path.addLine(to: center)
+        path.move(to: top); path.addLine(to: bottom)                                     // spine
+        path.move(to: top); path.addLine(to: p(1.0, 0.27)); path.addLine(to: center)     // upper-right
+        path.move(to: center); path.addLine(to: p(1.0, 0.73)); path.addLine(to: bottom)  // lower-right
+        path.move(to: p(0.0, 0.29)); path.addLine(to: center)                            // upper-left tick
+        path.move(to: p(0.0, 0.71)); path.addLine(to: center)                            // lower-left tick
         return path
     }
 }
