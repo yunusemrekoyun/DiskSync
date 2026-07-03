@@ -28,8 +28,10 @@ Six tabs live in the notch (all optional — toggle any off in Settings):
 - **📊 System** — live CPU / memory / disk / network meters.
 
 **Privacy & footprint:** everything runs on-device. The backup engine and system
-readouts make **no network calls**; the only optional network use is downloading
-Spotify cover art (toggleable in Settings). No telemetry, no analytics.
+readouts make **no network calls**. The only network use is optional Spotify cover
+art (off by default) and a **manual "Check for Updates"** in Settings that reads
+GitHub's public releases page — only when you tap it. No telemetry, no analytics,
+no background phoning home.
 
 ---
 

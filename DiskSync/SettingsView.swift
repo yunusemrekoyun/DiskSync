@@ -359,6 +359,8 @@ private struct ArchiveSettings: View {
 // MARK: - About
 
 private struct AboutSettings: View {
+    @State private var updater = UpdateChecker.shared
+
     private var version: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
@@ -380,6 +382,8 @@ private struct AboutSettings: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            updateRow
+
             Divider().padding(.vertical, 6)
 
             HStack(spacing: 12) {
@@ -398,5 +402,44 @@ private struct AboutSettings: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+    }
+
+    /// User-initiated update check (queries GitHub's public Releases API only
+    /// on tap — no background network, honoring the offline-by-default promise).
+    @ViewBuilder
+    private var updateRow: some View {
+        switch updater.state {
+        case .idle:
+            Button { Task { await updater.check() } } label: {
+                Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .buttonStyle(.bordered)
+        case .checking:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking…").font(.caption).foregroundStyle(.secondary)
+            }
+        case .upToDate:
+            Label("You're on the latest version", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(.green)
+        case .available(let newVersion, let url):
+            VStack(spacing: 6) {
+                Label("Version \(newVersion) is available", systemImage: "sparkles")
+                    .font(.caption.weight(.medium)).foregroundStyle(.blue)
+                Link(destination: url) {
+                    Label("Download", systemImage: "arrow.down.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        case .failed:
+            VStack(spacing: 4) {
+                Button { Task { await updater.check() } } label: {
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.bordered)
+                Text("Couldn't check right now. Try again.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
     }
 }
