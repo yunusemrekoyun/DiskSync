@@ -23,6 +23,7 @@ struct ControlView: View {
     private enum Expanded: Equatable { case wifi, bluetooth }
     @State private var panel: Panel = .none
     @State private var expanded: Expanded?
+    @Namespace private var tileNS
 
     var body: some View {
         Group {
@@ -51,22 +52,15 @@ struct ControlView: View {
     // MARK: - Home
 
     private var home: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 10) {
-                HStack(alignment: .top, spacing: 10) {
-                    musicCard
-                    rightColumn.frame(width: 118)
-                }
-                .frame(height: 108)
-                togglesRow
-                if let expanded {
-                    inlineToggle(expanded)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
+        VStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                musicCard
+                rightColumn.frame(width: 118)
             }
-            .padding(12)
+            .frame(maxHeight: .infinity)
+            togglesRow
         }
-        .animation(.snappy(duration: 0.22), value: expanded)
+        .padding(12)
     }
 
     // MARK: - Now playing (left card)
@@ -83,7 +77,7 @@ struct ControlView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if media.hasTrack {
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     HStack(spacing: 12) {
                         artwork
                         VStack(alignment: .leading, spacing: 2) {
@@ -93,10 +87,10 @@ struct ControlView: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    HStack(spacing: 26) {
-                        transport("backward.fill", size: 15) { await media.previous() }
-                        transport(media.isPlaying ? "pause.fill" : "play.fill", size: 22) { await media.playPause() }
-                        transport("forward.fill", size: 15) { await media.next() }
+                    HStack(spacing: 24) {
+                        transport("backward.fill", size: 14) { await media.previous() }
+                        transport(media.isPlaying ? "pause.fill" : "play.fill", size: 20) { await media.playPause() }
+                        transport("forward.fill", size: 14) { await media.next() }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -126,8 +120,8 @@ struct ControlView: View {
                 }
             }
         }
-        .frame(width: 48, height: 48)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: 42, height: 42)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
         .onTapGesture { if media.hasTrack { Haptics.select(); media.openSourceApp() } }
         .help("Open in \(media.source.displayName)")
@@ -187,18 +181,68 @@ struct ControlView: View {
     }
 
     // MARK: - Quick toggles (bottom)
+    //
+    // Four 1x1 tiles. Tapping Wi-Fi or Bluetooth morphs that tile into a 2x1
+    // (sliding to the left) while the other tiles fade out and a 2x1 controls
+    // panel (on/off + Settings) appears on the right — all within the same row,
+    // so nothing grows downward. Tap the tile again to restore the four tiles.
 
     private var togglesRow: some View {
-        HStack(spacing: 8) {
-            tile(icon: net.wifiOn ? "wifi" : "wifi.slash", label: "Wi-Fi",
-                 on: net.wifiOn, active: expanded == .wifi) { toggleExpanded(.wifi) }
-            tile(icon: "dot.radiowaves.right", label: "Bluetooth",
-                 on: net.bluetoothOn, active: expanded == .bluetooth) { toggleExpanded(.bluetooth) }
-            tile(icon: appearance.isDark ? "moon.fill" : "sun.max.fill", label: "Appearance",
-                 on: appearance.isDark, active: false) { Haptics.select(); appearance.toggle() }
-            tile(icon: "display", label: "Displays",
-                 on: false, active: false) { displays.refresh(); panel = .displays }
+        ZStack {
+            if let expanded {
+                expandedRow(expanded)
+            } else {
+                collapsedRow
+            }
         }
+        .frame(height: 54)
+        .animation(.snappy(duration: 0.3), value: expanded)
+    }
+
+    private var collapsedRow: some View {
+        HStack(spacing: 8) {
+            tile(matchedID: "wifi", icon: net.wifiOn ? "wifi" : "wifi.slash",
+                 label: "Wi-Fi", on: net.wifiOn) { toggleExpanded(.wifi) }
+            tile(matchedID: "bluetooth", icon: "dot.radiowaves.right",
+                 label: "Bluetooth", on: net.bluetoothOn) { toggleExpanded(.bluetooth) }
+            tile(icon: appearance.isDark ? "moon.fill" : "sun.max.fill",
+                 label: "Appearance", on: appearance.isDark) { Haptics.select(); appearance.toggle() }
+            tile(icon: "display", label: "Displays", on: false) {
+                displays.refresh(); panel = .displays
+            }
+        }
+    }
+
+    private func expandedRow(_ e: Expanded) -> some View {
+        HStack(spacing: 8) {
+            tile(matchedID: e == .wifi ? "wifi" : "bluetooth",
+                 icon: tileIcon(e), label: tileLabel(e), on: tileOn(e)) { toggleExpanded(e) }
+                .frame(maxWidth: .infinity)
+            expandedControls(e)
+                .frame(maxWidth: .infinity)
+                .transition(.opacity)
+        }
+    }
+
+    private func expandedControls(_ e: Expanded) -> some View {
+        let on = tileOn(e)
+        let enabled = (e == .wifi) ? net.wifiAvailable : net.bluetoothToggleable
+        return HStack(spacing: 10) {
+            Toggle("", isOn: Binding(get: { on }, set: { setPower(e, $0) }))
+                .toggleStyle(.switch).labelsHidden().disabled(!enabled)
+            Text(on ? "On" : "Off").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Button { openToggleSettings(e) } label: {
+                Image(systemName: "gearshape").font(.system(size: 14)).foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(.white.opacity(0.14), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("\(tileLabel(e)) Settings")
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func toggleExpanded(_ e: Expanded) {
@@ -206,7 +250,20 @@ struct ControlView: View {
         expanded = (expanded == e) ? nil : e
     }
 
-    private func tile(icon: String, label: String, on: Bool, active: Bool, action: @escaping () -> Void) -> some View {
+    private func tileIcon(_ e: Expanded) -> String {
+        e == .wifi ? (net.wifiOn ? "wifi" : "wifi.slash") : "dot.radiowaves.right"
+    }
+    private func tileLabel(_ e: Expanded) -> String { e == .wifi ? "Wi-Fi" : "Bluetooth" }
+    private func tileOn(_ e: Expanded) -> Bool { e == .wifi ? net.wifiOn : net.bluetoothOn }
+    private func setPower(_ e: Expanded, _ v: Bool) {
+        if e == .wifi { net.setWiFi(v) } else { net.setBluetooth(v) }
+    }
+    private func openToggleSettings(_ e: Expanded) {
+        if e == .wifi { net.openWiFiSettings() } else { net.openBluetoothSettings() }
+    }
+
+    private func tile(matchedID: String? = nil, icon: String, label: String, on: Bool,
+                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
@@ -218,44 +275,12 @@ struct ControlView: View {
                     }
                 Text(label).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(active ? AnyShapeStyle(.white.opacity(0.12)) : AnyShapeStyle(.white.opacity(0.05)),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    // MARK: - Inline Wi-Fi / Bluetooth controls
-
-    @ViewBuilder
-    private func inlineToggle(_ e: Expanded) -> some View {
-        switch e {
-        case .wifi:
-            inlineRow(title: "Wi-Fi", isOn: net.wifiOn, enabled: net.wifiAvailable,
-                      set: { net.setWiFi($0) }, openSettings: { net.openWiFiSettings() })
-        case .bluetooth:
-            inlineRow(title: "Bluetooth", isOn: net.bluetoothOn, enabled: net.bluetoothToggleable,
-                      set: { net.setBluetooth($0) }, openSettings: { net.openBluetoothSettings() })
-        }
-    }
-
-    private func inlineRow(title: String, isOn: Bool, enabled: Bool,
-                           set: @escaping (Bool) -> Void, openSettings: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            Toggle(title, isOn: Binding(get: { isOn }, set: set))
-                .toggleStyle(.switch)
-                .disabled(!enabled)
-                .font(.callout)
-            Spacer(minLength: 8)
-            Button { openSettings() } label: {
-                Label("Settings", systemImage: "gearshape").font(.caption)
-            }
-            .buttonStyle(.glass)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .matched(matchedID, in: tileNS)
     }
 
     // MARK: - Detail panels (output + displays)
@@ -365,5 +390,14 @@ struct VSlider: View {
             )
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private extension View {
+    /// Applies a matchedGeometryEffect only when an id is provided, so tiles
+    /// that morph (Wi-Fi/Bluetooth) animate their frame while the rest don't.
+    @ViewBuilder
+    func matched(_ id: String?, in ns: Namespace.ID) -> some View {
+        if let id { matchedGeometryEffect(id: id, in: ns) } else { self }
     }
 }
