@@ -10,6 +10,7 @@ import SwiftUI
 
 struct SystemMonitorView: View {
     @State private var monitor = SystemMonitor.shared
+    @State private var timer = TimerManager.shared
 
     var body: some View {
         VStack(spacing: 12) {
@@ -32,6 +33,9 @@ struct SystemMonitorView: View {
             .font(.caption.weight(.medium))
             .padding(.top, 2)
 
+            Divider().opacity(0.2)
+            timerSection
+
             Spacer(minLength: 0)
         }
         .padding(16)
@@ -40,6 +44,31 @@ struct SystemMonitorView: View {
             while !Task.isCancelled {
                 monitor.sample()
                 try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private var timerSection: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "timer").font(.callout).foregroundStyle(.purple).frame(width: 22)
+            if timer.isRunning {
+                Text(timer.displayString)
+                    .font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(.white)
+                Spacer()
+                Button(timer.isPaused ? "Resume" : "Pause") {
+                    Haptics.button()
+                    if timer.isPaused { timer.resume() } else { timer.pause() }
+                }
+                .buttonStyle(.bordered).controlSize(.small).hapticHover()
+                Button("Stop", role: .destructive) { Haptics.button(); timer.cancel() }
+                    .buttonStyle(.bordered).controlSize(.small).hapticHover()
+            } else {
+                Text("Timer").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                ForEach([1, 5, 10, 25], id: \.self) { m in
+                    Button("\(m)m") { Haptics.button(); timer.start(minutes: Double(m)) }
+                        .buttonStyle(.bordered).controlSize(.small).hapticHover()
+                }
             }
         }
     }

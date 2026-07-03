@@ -23,7 +23,7 @@ struct NotchGeometry: Equatable {
 /// any persistent activity for a couple of seconds.
 nonisolated enum FlashKind: Sendable, Equatable {
     case charging, charged, pluggedNotCharging, unplugged
-    case volume, download
+    case volume, download, timerDone
 }
 
 nonisolated struct NotchFlash: Equatable, Sendable {
@@ -121,6 +121,7 @@ struct FlashView: View {
         case .unplugged:            return .orange
         case .volume:               return .white
         case .download:             return .blue
+        case .timerDone:            return .green
         }
     }
 
@@ -132,6 +133,7 @@ struct FlashView: View {
         case .unplugged:          return "bolt.slash.fill"
         case .volume:             return volumeSymbol
         case .download:           return "arrow.down.circle.fill"
+        case .timerDone:          return "timer"
         }
     }
 
@@ -150,11 +152,16 @@ struct FlashView: View {
         case .unplugged:          return "On Battery"
         case .volume:             return "Volume"
         case .download:           return "Downloaded"
+        case .timerDone:          return "Time's Up"
         }
     }
 
     private var rightText: String {
-        flash.kind == .download ? flash.text : "\(flash.level)%"
+        switch flash.kind {
+        case .download:  return flash.text
+        case .timerDone: return ""
+        default:         return "\(flash.level)%"
+        }
     }
 
     var body: some View {
@@ -259,18 +266,33 @@ struct Equalizer: View {
     }
 }
 
-/// Countdown on the right of the notch (see TimerManager). Placeholder until the
-/// timer feature is wired; currently shows a static ring + time.
+/// A depleting ring on the left of the notch and the remaining time on the right.
 struct TimerActivity: View {
+    @State private var timer = TimerManager.shared
     let notchWidth: CGFloat
+
     var body: some View {
         HStack(spacing: 0) {
-            Image(systemName: "timer")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            ZStack {
+                Circle().stroke(.white.opacity(0.25), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: timer.fraction)
+                    .stroke(timer.isPaused ? Color.yellow : Color.green,
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: timer.isPaused ? "pause.fill" : "timer")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+            .frame(width: 16, height: 16)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+
             Spacer().frame(width: notchWidth)
-            Text("")
+
+            Text(timer.displayString)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 10)

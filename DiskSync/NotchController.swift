@@ -82,6 +82,9 @@ final class NotchController {
         // even while the notch is collapsed (there is no public push for
         // system playback). Gated by the preference so it can be turned off.
         if liveTask == nil {
+            // Show/hide the pill immediately when a timer starts/stops.
+            TimerManager.shared.onStateChange = { [weak self] in self?.updateActivity() }
+            TimerManager.shared.onFinish = { [weak self] in self?.timerFinished() }
             liveTask = Task { [weak self] in
                 while !Task.isCancelled {
                     let prefs = Preferences.shared
@@ -108,11 +111,20 @@ final class NotchController {
         let prefs = Preferences.shared
         guard prefs.liveActivitiesEnabled, !model.isExpanded else { model.activity = nil; return }
         let media = MediaController.shared
-        if prefs.laNowPlaying, media.hasTrack, media.isPlaying {
+        if prefs.laTimer, TimerManager.shared.isRunning {
+            model.activity = .timer
+        } else if prefs.laNowPlaying, media.hasTrack, media.isPlaying {
             model.activity = .nowPlaying
         } else {
             model.activity = nil
         }
+    }
+
+    private func timerFinished() {
+        updateActivity()   // drop the timer pill (isRunning is now false)
+        showFlash(NotchFlash(kind: .timerDone), duration: 4)
+        Haptics.event()
+        Task { await Notifier.post(title: "Timer done", body: "Your timer has finished.", enabled: true) }
     }
 
     /// A batch of ~/Downloads changes arrived — flash the newest finished file.
